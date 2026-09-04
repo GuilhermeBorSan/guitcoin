@@ -1458,26 +1458,21 @@ function GcRecorrencias({ templates, categories, onEdit }) {
                 <span className="gc-money">{gcFmtMoney(g.total)}</span>
               </div>
               <div className="gc-list">
-                {g.items.map(t => {
-                  const tipo = gcValorTipo(t);
-                  return (
-                    <button type="button" className="gc-list-row gc-list-row-btn" key={t.id} onClick={() => onEdit(t)}>
-                      <span className="gc-list-row-title gc-list-row-grow">
-                        <span className="gc-list-row-title-line">
-                          <span>{t.nome}</span>
-                          <span className={"gc-pill" + (tipo === "variavel" ? " gc-pill-muted" : " gc-pill-gold")}>{tipo === "variavel" ? "Variável" : "Fixo"}</span>
-                          {t.compartilhado && <span className="gc-pill gc-pill-gold">dividido</span>}
-                        </span>
-                        <small className="gc-list-row-sub">
-                          {t.frequencia === "anual" ? `Anual · ${MONTH_LABELS[(t.mesCobranca || 1) - 1]}` : "Mensal"}
-                          {t.dataFim ? " · pausada" : t.ativo === false ? " · inativa" : ""}
-                          {t.compartilhado ? ` · ${t.minhaParcelaPct}% minha parte` : ""}
-                        </small>
+                {g.items.map(t => (
+                  <button type="button" className="gc-list-row gc-list-row-btn" key={t.id} onClick={() => onEdit(t)}>
+                    <span className="gc-list-row-title gc-list-row-grow">
+                      <span className="gc-list-row-title-line">
+                        <span>{t.nome}</span>
                       </span>
-                      <span className="gc-money">{gcFmtMoney(t.valorPadrao)}</span>
-                    </button>
-                  );
-                })}
+                      <small className="gc-list-row-sub">
+                        {t.frequencia === "anual" ? `Anual · ${MONTH_LABELS[(t.mesCobranca || 1) - 1]}` : "Mensal"}
+                        {t.dataFim ? " · pausada" : t.ativo === false ? " · inativa" : ""}
+                        {t.compartilhado ? ` · ${t.minhaParcelaPct}% minha parte` : ""}
+                      </small>
+                    </span>
+                    <span className="gc-money">{gcFmtMoney(t.valorPadrao)}</span>
+                  </button>
+                ))}
               </div>
             </div>
           ))}
