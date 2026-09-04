@@ -942,7 +942,7 @@ function EmptyState({ icon, title, message, action }) {
    fonte de receita, com seletor de mês (mesmo padrão de mês que Despesas
    vai usar na Fase 2).
 ----------------------------------------------------------------*/
-function GcReceitas({ sources, entries, ano, onAnoChange, onEditSource, onSaveEntryValor }) {
+function GcReceitas({ sources, entries, ano, onEditSource, onSaveEntryValor }) {
   const [mesExpandido, setMesExpandido] = useState(() => gcDefaultMesExpandido(ano));
   useEffect(() => {
     setMesExpandido(gcDefaultMesExpandido(ano));
@@ -964,12 +964,6 @@ function GcReceitas({ sources, entries, ano, onAnoChange, onEditSource, onSaveEn
 
   return (
     <div className="gc-screen">
-      <div className="gc-year-switch">
-        <button type="button" className="lb-icon-btn" onClick={() => onAnoChange(String(Number(ano) - 1))} aria-label="Ano anterior"><ChevronLeft size={20} /></button>
-        <span className="gc-month-label">{ano}</span>
-        <button type="button" className="lb-icon-btn" onClick={() => onAnoChange(String(Number(ano) + 1))} aria-label="Próximo ano"><ChevronRight size={20} /></button>
-      </div>
-
       <div className="gc-receitas-hero">
         <span className="gc-receitas-hero-num gc-money">{gcFmtMoney(faturamentoYTD)}</span>
         <span className="gc-receitas-hero-cap">Faturamento YTD</span>
@@ -1155,7 +1149,7 @@ function GcIncomeProjectionForm({ ano, initial, onSave, onClose }) {
    (Casa/Saúde/Assinaturas/Pessoal/Trabalho), com checkbox de "pago"
    inline e input de valor nas variáveis ainda estimadas (confirma ao sair).
 ----------------------------------------------------------------*/
-function GcDespesas({ instances, categories, competencia, onCompetenciaChange, onTogglePago, onSaveValor, onEditInstance, onManageCategories }) {
+function GcDespesas({ instances, categories, competencia, onTogglePago, onSaveValor, onEditInstance, onManageCategories }) {
   const grupos = gcGroupInstances(instances, competencia, categories);
   const totalMes = gcMonthInstancesTotal(instances, competencia);
   const custoMes = gcCustoMes(instances, competencia);
@@ -1179,11 +1173,7 @@ function GcDespesas({ instances, categories, competencia, onCompetenciaChange, o
       </div>
 
       <div className="gc-despesas-toolbar">
-        <div className="gc-month-switch">
-          <button type="button" className="lb-icon-btn" onClick={() => onCompetenciaChange(gcShiftCompetencia(competencia, -1))} aria-label="Mês anterior"><ChevronLeft size={20} /></button>
-          <span className="gc-month-label">{competenciaLabel(competencia)}</span>
-          <button type="button" className="lb-icon-btn" onClick={() => onCompetenciaChange(gcShiftCompetencia(competencia, 1))} aria-label="Próximo mês"><ChevronRight size={20} /></button>
-        </div>
+        <span className="gc-month-label">{competenciaLabel(competencia)}</span>
         <button type="button" className="lb-icon-btn gc-despesas-toolbar-cat" onClick={onManageCategories} aria-label="Gerenciar categorias"><Settings size={18} /></button>
       </div>
 
@@ -2303,7 +2293,7 @@ function App({ session }) {
   const [despesasFabMenu, setDespesasFabMenu] = useState(false);
   const [dashboardFabMenu, setDashboardFabMenu] = useState(false);
   const [sonhosFabMenu, setSonhosFabMenu] = useState(false);
-  const [dashboardAnoFilterOpen, setDashboardAnoFilterOpen] = useState(false);
+  const [topbarFilterOpen, setTopbarFilterOpen] = useState(false);
   const [categoriesModal, setCategoriesModal] = useState(false);
   const [importing, setImporting] = useState(false);
   const [contaItens, setContaItens] = useState([]);
@@ -2370,15 +2360,15 @@ function App({ session }) {
   }, [sidebarOpen]);
 
   useEffect(() => {
-    if (subTab !== "dashboard") setDashboardAnoFilterOpen(false);
+    setTopbarFilterOpen(false);
   }, [subTab]);
 
   useEffect(() => {
-    if (!dashboardAnoFilterOpen) return;
-    const onKey = (e) => { if (e.key === "Escape") setDashboardAnoFilterOpen(false); };
+    if (!topbarFilterOpen) return;
+    const onKey = (e) => { if (e.key === "Escape") setTopbarFilterOpen(false); };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [dashboardAnoFilterOpen]);
+  }, [topbarFilterOpen]);
 
   const openTab = (tab) => { setSidebarOpen(false); setSubTab(tab); };
   const financeiro = GC_NAV_ITEMS.filter(i => i.group === "Financeiro");
@@ -2431,25 +2421,38 @@ function App({ session }) {
             <strong>Guitcoin</strong>
           </button>
           <span className="gc-topbar-spacer" />
-          {subTab === "dashboard" && (
+          {(subTab === "dashboard" || subTab === "receitas" || subTab === "despesas") && (
             <div className="gc-topbar-filter">
-              <button type="button" className={"lb-icon-btn" + (dashboardAnoFilterOpen ? " active" : "")}
-                onClick={() => setDashboardAnoFilterOpen(o => !o)}
-                aria-label={`Filtrar por ano (${dashboardAno})`}
-                aria-expanded={dashboardAnoFilterOpen}
+              <button type="button" className={"lb-icon-btn" + (topbarFilterOpen ? " active" : "")}
+                onClick={() => setTopbarFilterOpen(o => !o)}
+                aria-label={subTab === "despesas" ? `Filtrar por mês (${competenciaLabel(despesasComp)})` : `Filtrar por ano (${subTab === "dashboard" ? dashboardAno : receitasAno})`}
+                aria-expanded={topbarFilterOpen}
                 aria-haspopup="dialog">
                 <Filter size={18} />
               </button>
-              {dashboardAnoFilterOpen && (
+              {topbarFilterOpen && (
                 <>
-                  <div className="gc-topbar-filter-backdrop" onClick={() => setDashboardAnoFilterOpen(false)} />
-                  <div className="gc-topbar-filter-popover" role="dialog" aria-label="Ano do dashboard">
-                    <span className="gc-topbar-filter-label">Ano</span>
-                    <div className="gc-year-switch">
-                      <button type="button" className="lb-icon-btn" onClick={() => setDashboardAno(String(Number(dashboardAno) - 1))} aria-label="Ano anterior"><ChevronLeft size={20} /></button>
-                      <span className="gc-month-label">{dashboardAno}</span>
-                      <button type="button" className="lb-icon-btn" onClick={() => setDashboardAno(String(Number(dashboardAno) + 1))} aria-label="Próximo ano"><ChevronRight size={20} /></button>
-                    </div>
+                  <div className="gc-topbar-filter-backdrop" onClick={() => setTopbarFilterOpen(false)} />
+                  <div className="gc-topbar-filter-popover" role="dialog" aria-label={subTab === "despesas" ? "Mês das despesas" : "Ano"}>
+                    {subTab === "despesas" ? (
+                      <>
+                        <span className="gc-topbar-filter-label">Mês</span>
+                        <div className="gc-month-switch">
+                          <button type="button" className="lb-icon-btn" onClick={() => setDespesasComp(gcShiftCompetencia(despesasComp, -1))} aria-label="Mês anterior"><ChevronLeft size={20} /></button>
+                          <span className="gc-month-label">{competenciaLabel(despesasComp)}</span>
+                          <button type="button" className="lb-icon-btn" onClick={() => setDespesasComp(gcShiftCompetencia(despesasComp, 1))} aria-label="Próximo mês"><ChevronRight size={20} /></button>
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <span className="gc-topbar-filter-label">Ano</span>
+                        <div className="gc-year-switch">
+                          <button type="button" className="lb-icon-btn" onClick={() => (subTab === "dashboard" ? setDashboardAno(String(Number(dashboardAno) - 1)) : setReceitasAno(String(Number(receitasAno) - 1)))} aria-label="Ano anterior"><ChevronLeft size={20} /></button>
+                          <span className="gc-month-label">{subTab === "dashboard" ? dashboardAno : receitasAno}</span>
+                          <button type="button" className="lb-icon-btn" onClick={() => (subTab === "dashboard" ? setDashboardAno(String(Number(dashboardAno) + 1)) : setReceitasAno(String(Number(receitasAno) + 1)))} aria-label="Próximo ano"><ChevronRight size={20} /></button>
+                        </div>
+                      </>
+                    )}
                   </div>
                 </>
               )}
@@ -2479,13 +2482,13 @@ function App({ session }) {
           ) : subTab === "receitas" ? (
             <GcReceitas
               sources={incomeSources} entries={incomeEntries}
-              ano={receitasAno} onAnoChange={setReceitasAno}
+              ano={receitasAno}
               onEditSource={(s) => setSourceForm({ initial: s })}
               onSaveEntryValor={(sourceId, competencia, existingId, valor) => saveIncomeEntry({ id: existingId || uid(), sourceId, competencia, valor })}
             />
           ) : subTab === "despesas" ? (
             <GcDespesas
-              instances={expenseInstances} categories={expenseCategories} competencia={despesasComp} onCompetenciaChange={setDespesasComp}
+              instances={expenseInstances} categories={expenseCategories} competencia={despesasComp}
               onTogglePago={toggleExpenseInstancePago}
               onSaveValor={(inst, valor) => saveExpenseInstance({ ...inst, valor, valorConfirmado: true })}
               onEditInstance={(inst) => setInstanceForm({ initial: inst })}
