@@ -2798,7 +2798,7 @@ html.gc-iphone-preview .gc-sidebar { max-height: calc(100% - var(--gc-topbar-h) 
 .lb-field select { padding-right: 32px; cursor: pointer; }
 .lb-field input:focus, .lb-field select:focus { outline: 1.5px solid var(--gc-accent); outline-offset: 1px; }
 
-.lb-form-footer { position: sticky; bottom: 0; z-index: 3; margin: 0 calc(-1 * var(--sp-5)); padding: var(--sp-4) var(--sp-5) calc(var(--sp-4) + env(safe-area-inset-bottom, var(--gc-sab))); background: #fff; border-top: 1px solid var(--gc-line); display: flex; flex-direction: column; gap: var(--sp-3); }
+.lb-form-footer { grid-column: 1 / -1; position: sticky; bottom: 0; z-index: 3; margin: 0 calc(-1 * var(--sp-5)); padding: var(--sp-4) var(--sp-5) calc(var(--sp-4) + env(safe-area-inset-bottom, var(--gc-sab))); background: #fff; border-top: 1px solid var(--gc-line); display: flex; flex-direction: column; gap: var(--sp-3); }
 .lb-form-actions { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); flex-wrap: wrap; }
 .lb-form-actions-left { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
 .lb-form-actions-right { display: flex; align-items: center; gap: var(--sp-2); margin-left: auto; flex-wrap: wrap; justify-content: flex-end; }
