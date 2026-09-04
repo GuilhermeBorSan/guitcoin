@@ -6,7 +6,8 @@
 // Modelo de dados: cada "tabela" é uma subcoleção em
 // users/{uid}/<colecao>/{id} (income_sources, income_entries,
 // income_projections, expense_templates, expense_instances,
-// investment_snapshots, wishlist_items). Uma ÚNICA regra recursiva
+// investment_snapshots, wishlist_items, wishlist_savings_snapshots, trips,
+// trip_expenses). Uma ÚNICA regra recursiva
 // (`{document=**}`) cobre todas elas: só o dono (uid = auth.uid()) lê ou
 // escreve qualquer documento dentro do seu próprio users/{uid}/... — não
 // precisa de uma regra por coleção nem de 4 políticas por tabela como no

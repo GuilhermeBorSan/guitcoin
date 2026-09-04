@@ -87,6 +87,7 @@ const Menu = (p) => <IconBase {...p}><line x1="3" y1="12" x2="21" y2="12"/><line
 const Settings = (p) => <IconBase {...p}><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></IconBase>;
 const Filter = (p) => <IconBase {...p}><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></IconBase>;
 const Utensils = (p) => <IconBase {...p}><path d="M3 2v7c0 1.1.9 2 2 2h4a2 2 0 0 0 2-2V2"/><path d="M7 2v20"/><path d="M21 15V2a5 5 0 0 0-5 5v6c0 1.1.9 2 2 2h3z"/><path d="M21 15v7"/></IconBase>;
+const Plane = (p) => <IconBase {...p}><path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-1 .1-1.3.5l-.4.5c-.4.5-.2 1.3.3 1.6L9 12l-2 3H4l-1 1.5 3 1 1 3L8.5 19l3-2 3.7 4.4c.4.4 1.1.4 1.4-.1l.4-.5c.3-.4.3-.9-.2-1.6z"/></IconBase>;
 
 // Marca (logo G mira — assets/icon.png no círculo dourado via CSS), mesmo
 // papel do GgFlower no Guitchelin: topbar e botão da gaveta.
@@ -433,6 +434,74 @@ function gcWishlistGroups(items) {
   const total = groups.reduce((s, g) => s + g.subtotal, 0);
   return { groups, total };
 }
+
+// ---- Fórmulas de Viagens (funções puras) ----
+// Categorias seguem o mesmo espírito da Lista de Sonhos: texto livre por
+// viagem (sem CRUD/coleção própria), com estas seed só de sugestão inicial
+// (vêm da planilha "Gastos_BA_ARRCAR_2024" usada de referência).
+const GC_TRIP_EXPENSE_CATEGORIES = ["Passagens ida", "Passagens volta", "Hospedagem", "Alimentação", "Transporte"];
+// Paleta de cores por participante (mesmo papel do "Disponível"
+// laranja/roxo/verde no topo da planilha original).
+const GC_TRIP_COLORS = ["#D4B45A", "#8E7CC3", "#6FCF97", "#56A0D3", "#E08F56", "#E05555"];
+// dia = -1 (Pré-viagem) ou 0..numDias-1 ("Dia N"), mesmas colunas da planilha.
+function gcTripDiaLabel(dia) {
+  return dia === -1 ? "Pré-viagem" : `Dia ${dia}`;
+}
+function gcTripExpensesDoDia(expenses, dia) {
+  return (expenses || []).filter(e => e.dia === dia);
+}
+function gcTripTotalDia(expenses, dia) {
+  return gcTripExpensesDoDia(expenses, dia).reduce((s, e) => s + (e.valor || 0), 0);
+}
+function gcTripTotalGeral(expenses) {
+  return (expenses || []).reduce((s, e) => s + (e.valor || 0), 0);
+}
+// Agrupa os gastos de um dia por categoria (mesmo espírito de
+// gcWishlistGroups): seed primeiro, categorias custom depois, só as com item.
+function gcTripGroupsDoDia(expenses, dia, seedCategorias) {
+  const doDia = gcTripExpensesDoDia(expenses, dia);
+  const extras = Array.from(new Set(doDia.map(e => e.categoria))).filter(c => !seedCategorias.includes(c));
+  const categorias = [...seedCategorias, ...extras];
+  const groups = categorias
+    .map(categoria => {
+      const its = doDia.filter(e => e.categoria === categoria);
+      return { categoria, items: its, subtotal: its.reduce((s, e) => s + (e.valor || 0), 0) };
+    })
+    .filter(g => g.items.length > 0);
+  return { groups, total: doDia.reduce((s, e) => s + (e.valor || 0), 0) };
+}
+// Saldo por participante = quanto pagou − parte justa (divisão igualitária
+// entre todos os participantes da viagem, mesmo cálculo de "quem pagou vs
+// quem deve" de um app de divisão de contas de viagem).
+function gcTripSaldos(trip, expenses) {
+  const participantes = (trip && trip.participantes) || [];
+  const n = participantes.length || 1;
+  const total = gcTripTotalGeral(expenses);
+  const parteJusta = total / n;
+  return participantes.map(p => {
+    const pago = expenses.filter(e => e.pagoPorId === p.id).reduce((s, e) => s + (e.valor || 0), 0);
+    return { ...p, pago, parteJusta, saldo: pago - parteJusta };
+  });
+}
+// Simplifica os saldos num número mínimo de transferências: maior devedor
+// acerta com o maior credor, repete até zerar (algoritmo guloso clássico de
+// "simplify debts", equivalente ao que apps de divisão de viagem fazem).
+function gcTripAcertos(saldos) {
+  const devedores = saldos.filter(s => s.saldo < -0.005).map(s => ({ id: s.id, nome: s.nome, valor: -s.saldo })).sort((a, b) => b.valor - a.valor);
+  const credores = saldos.filter(s => s.saldo > 0.005).map(s => ({ id: s.id, nome: s.nome, valor: s.saldo })).sort((a, b) => b.valor - a.valor);
+  const acertos = [];
+  let i = 0, j = 0;
+  while (i < devedores.length && j < credores.length) {
+    const d = devedores[i], c = credores[j];
+    const v = Math.min(d.valor, c.valor);
+    acertos.push({ de: d.nome, para: c.nome, valor: v });
+    d.valor -= v; c.valor -= v;
+    if (d.valor < 0.005) i++;
+    if (c.valor < 0.005) j++;
+  }
+  return acertos;
+}
+
 // Preview local: localhost entra direto no app com dados fictícios, sem
 // gravar no Firebase de produção. Em guitcoin.vercel.app isso fica off.
 const GC_IS_LOCAL = ["localhost", "127.0.0.1"].includes(location.hostname);
@@ -664,6 +733,29 @@ const GC_DEMO_DATA = {
     { id: "demo-wish-sav-6", competencia: "2026-06", saldo: 1100, observacao: "" },
     { id: "demo-wish-sav-7", competencia: "2026-07", saldo: 1200, observacao: "" },
   ],
+  // Viagens: uma viagem de exemplo baseada na planilha "Gastos_BA_ARRCAR_2024"
+  // (Pré-viagem + Dia 0..6), com 2 participantes pra exercitar os saldos e os
+  // acertos ("quem deve pra quem").
+  trips: [
+    {
+      id: "demo-trip-ba", nome: "Bahia — Arraial", destino: "Arraial d'Ajuda, BA",
+      dataInicio: "2024-11-20", dataFim: "2024-11-27", numDias: 7,
+      participantes: [
+        { id: "demo-part-gui", nome: "Gui", cor: GC_TRIP_COLORS[0], disponivel: 2000 },
+        { id: "demo-part-bruno", nome: "Bruno", cor: GC_TRIP_COLORS[1], disponivel: 1800 },
+      ],
+      arquivada: false, ordem: 0,
+    },
+  ],
+  tripExpenses: [
+    { id: "demo-texp-1", tripId: "demo-trip-ba", categoria: "Passagens ida", descricao: "Voo GIG→BA", dia: -1, valor: 620, pagoPorId: "demo-part-gui" },
+    { id: "demo-texp-2", tripId: "demo-trip-ba", categoria: "Passagens volta", descricao: "Voo BA→GIG", dia: -1, valor: 640, pagoPorId: "demo-part-bruno" },
+    { id: "demo-texp-3", tripId: "demo-trip-ba", categoria: "Hospedagem", descricao: "Pousada (7 diárias)", dia: 0, valor: 2100, pagoPorId: "demo-part-gui" },
+    { id: "demo-texp-4", tripId: "demo-trip-ba", categoria: "Transporte", descricao: "Táxi do aeroporto", dia: 0, valor: 90, pagoPorId: "demo-part-gui" },
+    { id: "demo-texp-5", tripId: "demo-trip-ba", categoria: "Alimentação", descricao: "Jantar de chegada", dia: 0, valor: 180, pagoPorId: "demo-part-bruno" },
+    { id: "demo-texp-6", tripId: "demo-trip-ba", categoria: "Alimentação", descricao: "Almoço na praia", dia: 1, valor: 140, pagoPorId: "demo-part-gui" },
+    { id: "demo-texp-7", tripId: "demo-trip-ba", categoria: "Transporte", descricao: "Aluguel de buggy", dia: 1, valor: 250, pagoPorId: "demo-part-bruno" },
+  ],
 };
 
 // ---- Dados (Firestore: as 8 coleções do app). Isolado aqui: as telas
@@ -687,6 +779,8 @@ function useGcData(session) {
   const [investmentSnapshots, setInvestmentSnapshots] = useState(GC_IS_LOCAL ? GC_DEMO_DATA.investmentSnapshots : []);
   const [wishlistItems, setWishlistItems] = useState(GC_IS_LOCAL ? GC_DEMO_DATA.wishlistItems : []);
   const [wishlistSavingsSnapshots, setWishlistSavingsSnapshots] = useState(GC_IS_LOCAL ? GC_DEMO_DATA.wishlistSavingsSnapshots : []);
+  const [trips, setTrips] = useState(GC_IS_LOCAL ? GC_DEMO_DATA.trips : []);
+  const [tripExpenses, setTripExpenses] = useState(GC_IS_LOCAL ? GC_DEMO_DATA.tripExpenses : []);
   const [loading, setLoading] = useState(!GC_IS_LOCAL);
   const [error, setError] = useState(null);
 
@@ -694,7 +788,7 @@ function useGcData(session) {
     if (GC_IS_LOCAL || !gcFirestore) { setLoading(false); return; }
     setLoading(true);
     try {
-      const [categories, sources, entries, projections, templates, instRaw, snapshots, wishlist, wishSavings] = await Promise.all([
+      const [categories, sources, entries, projections, templates, instRaw, snapshots, wishlist, wishSavings, tripsData, tripExpensesData] = await Promise.all([
         gcFetchAll(session, "expense_categories"),
         gcFetchAll(session, "income_sources"),
         gcFetchAll(session, "income_entries"),
@@ -704,6 +798,8 @@ function useGcData(session) {
         gcFetchAll(session, "investment_snapshots"),
         gcFetchAll(session, "wishlist_items"),
         gcFetchAll(session, "wishlist_savings_snapshots"),
+        gcFetchAll(session, "trips"),
+        gcFetchAll(session, "trip_expenses"),
       ]);
       // Instalação nova (sem nenhuma categoria ainda): semeia as 5 categorias
       // padrão uma única vez, pra tela de Despesas não nascer vazia.
@@ -739,6 +835,8 @@ function useGcData(session) {
       setInvestmentSnapshots(snapshots);
       setWishlistItems(reconciliado.wishlist_items);
       setWishlistSavingsSnapshots(wishSavings);
+      setTrips(tripsData);
+      setTripExpenses(tripExpensesData);
     } catch (err) {
       console.error(err);
       setError(gcWriteErrorMsg(err, "carregar os dados"));
@@ -914,14 +1012,54 @@ function useGcData(session) {
     catch (err) { console.error(err); setError(gcWriteErrorMsg(err, "excluir o saldo da poupança")); await loadData(); return false; }
   };
 
+  const saveTrip = async (trip) => {
+    setTrips(prev => prev.some(t => t.id === trip.id) ? prev.map(t => t.id === trip.id ? trip : t) : [...prev, trip]);
+    if (GC_IS_LOCAL) return true;
+    try { await gcUpsertOne(session, "trips", trip); return true; }
+    catch (err) { console.error(err); setError(gcWriteErrorMsg(err, "salvar a viagem")); await loadData(); return false; }
+  };
+
+  // Apagar uma viagem apaga também os gastos dela (diferente do template de
+  // recorrência, que só orfaniza): sem a viagem, um gasto solto não tem pra
+  // onde voltar (não existe tela "todos os gastos de todas as viagens").
+  const deleteTrip = async (id) => {
+    const gastos = tripExpenses.filter(e => e.tripId === id);
+    setTrips(prev => prev.filter(t => t.id !== id));
+    setTripExpenses(prev => prev.filter(e => e.tripId !== id));
+    if (GC_IS_LOCAL) return true;
+    try {
+      await gcDeleteOne(session, "trips", id);
+      await Promise.all(gastos.map(e => gcDeleteOne(session, "trip_expenses", e.id)));
+      return true;
+    } catch (err) {
+      console.error(err); setError(gcWriteErrorMsg(err, "excluir a viagem")); await loadData(); return false;
+    }
+  };
+
+  const saveTripExpense = async (exp) => {
+    setTripExpenses(prev => prev.some(e => e.id === exp.id) ? prev.map(e => e.id === exp.id ? exp : e) : [...prev, exp]);
+    if (GC_IS_LOCAL) return true;
+    try { await gcUpsertOne(session, "trip_expenses", exp); return true; }
+    catch (err) { console.error(err); setError(gcWriteErrorMsg(err, "salvar o gasto da viagem")); await loadData(); return false; }
+  };
+
+  const deleteTripExpense = async (id) => {
+    setTripExpenses(prev => prev.filter(e => e.id !== id));
+    if (GC_IS_LOCAL) return true;
+    try { await gcDeleteOne(session, "trip_expenses", id); return true; }
+    catch (err) { console.error(err); setError(gcWriteErrorMsg(err, "excluir o gasto da viagem")); await loadData(); return false; }
+  };
+
   return {
     expenseCategories, incomeSources, incomeEntries, incomeProjections, expenseTemplates, expenseInstances, investmentSnapshots, wishlistItems, wishlistSavingsSnapshots,
+    trips, tripExpenses,
     loading, error, dismissError: () => setError(null),
     saveExpenseCategory, reorderExpenseCategories, deleteExpenseCategory,
     saveIncomeSource, deleteIncomeSource, saveIncomeEntry, deleteIncomeEntry, saveIncomeProjection,
     saveExpenseTemplate, deleteExpenseTemplate, saveExpenseInstance, deleteExpenseInstance, toggleExpenseInstancePago,
     saveInvestmentSnapshot, saveWishlistItem, deleteWishlistItem, toggleWishlistComprado,
     saveWishlistSavingsSnapshot, deleteWishlistSavingsSnapshot,
+    saveTrip, deleteTrip, saveTripExpense, deleteTripExpense,
   };
 }
 
@@ -2378,6 +2516,323 @@ function GcContaItemForm({ initial, onSave, onDelete, onClose }) {
 }
 
 /* ---------------------------------------------------------------
+   TELA: VIAGENS — lista de viagens + detalhe (gastos por dia/categoria,
+   saldos e acertos entre participantes). Adaptação móvel da planilha
+   "Gastos_BA_ARRCAR_2024" (categoria × dia): aqui o dia é um seletor, não
+   uma coluna de grid, pra caber na tela do celular; o conteúdo (categorias,
+   totais, divisão) é o mesmo.
+----------------------------------------------------------------*/
+function GcViagens({ trips, tripExpenses, onOpen }) {
+  const ordenadas = trips.slice().sort((a, b) => (b.dataInicio || "").localeCompare(a.dataInicio || ""));
+  return (
+    <div className="gc-screen">
+      {trips.length === 0 ? (
+        <EmptyState icon={<Plane size={40} />} title="Nenhuma viagem" message="Toque no + pra cadastrar uma viagem e começar a dividir os gastos." />
+      ) : (
+        <div className="gc-list">
+          {ordenadas.map(t => {
+            const gastos = tripExpenses.filter(e => e.tripId === t.id);
+            const total = gcTripTotalGeral(gastos);
+            const participantesLabel = (t.participantes || []).map(p => p.nome).filter(Boolean).join(", ");
+            return (
+              <button type="button" className="gc-list-row gc-list-row-btn" key={t.id} onClick={() => onOpen(t.id)}>
+                <span className="gc-list-row-title gc-list-row-grow">
+                  <span className="gc-list-row-title-line"><span>{t.nome}</span></span>
+                  {(t.destino || participantesLabel) && (
+                    <small className="gc-list-row-sub">{[t.destino, participantesLabel].filter(Boolean).join(" · ")}</small>
+                  )}
+                </span>
+                <span className="gc-row-valor-display gc-money">{gcFmtMoney(total)}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function GcViagemDetalhe({ trip, expenses, dia, setDia, onBack, onEditTrip, onEditExpense }) {
+  if (!trip) return null;
+  const numDias = Math.max(1, trip.numDias || 1);
+  const totalGeral = gcTripTotalGeral(expenses);
+  const totalDia = gcTripTotalDia(expenses, dia);
+  const saldos = gcTripSaldos(trip, expenses);
+  const acertos = gcTripAcertos(saldos);
+  const { groups } = gcTripGroupsDoDia(expenses, dia, GC_TRIP_EXPENSE_CATEGORIES);
+
+  return (
+    <div className="gc-screen">
+      <div className="gc-trip-header">
+        <button type="button" className="lb-icon-btn" onClick={onBack} aria-label="Voltar para Viagens"><ChevronLeft size={22} /></button>
+        <span className="gc-trip-header-txt">
+          <strong>{trip.nome}</strong>
+          {trip.destino && <small>{trip.destino}</small>}
+        </span>
+        <button type="button" className="lb-icon-btn" onClick={onEditTrip} aria-label="Editar viagem"><Pencil size={18} /></button>
+      </div>
+
+      <div className="gc-statcards gc-statcards-2">
+        <div className="gc-statcard">
+          <span className="gc-statcard-num gc-money">{gcFmtMoney(totalGeral)}</span>
+          <span className="gc-statcard-cap">Total da viagem</span>
+        </div>
+        <div className="gc-statcard">
+          <span className="gc-statcard-num gc-money">{gcFmtMoney(totalDia)}</span>
+          <span className="gc-statcard-cap">Total · {gcTripDiaLabel(dia)}</span>
+        </div>
+      </div>
+
+      {saldos.length > 0 && (
+        <div className="gc-trip-participantes">
+          {saldos.map(p => (
+            <div className="gc-trip-participante" key={p.id}>
+              <span className="gc-trip-participante-dot" style={{ background: p.cor || "var(--gc-accent)" }} />
+              <span className="gc-trip-participante-nome">{p.nome}</span>
+              <span className="gc-trip-participante-vals">
+                <small>Disponível {gcFmtMoney(p.disponivel)}</small>
+                <small className={gcDeltaTone(p.saldo)}>
+                  {p.saldo >= 0 ? `A receber ${gcFmtMoney(p.saldo)}` : `Deve ${gcFmtMoney(-p.saldo)}`}
+                </small>
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {acertos.length > 0 && (
+        <div className="gc-group">
+          <div className="gc-group-header"><span>Acertos</span></div>
+          <div className="gc-list">
+            {acertos.map((a, i) => (
+              <div className="gc-list-row" key={i}>
+                <span className="gc-list-row-title">{a.de} → {a.para}</span>
+                <span className="gc-row-valor-display gc-money">{gcFmtMoney(a.valor)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="gc-month-switch">
+        <button type="button" className="lb-icon-btn" disabled={dia <= -1} onClick={() => setDia(Math.max(-1, dia - 1))} aria-label="Dia anterior"><ChevronLeft size={20} /></button>
+        <span className="gc-month-label">{gcTripDiaLabel(dia)}</span>
+        <button type="button" className="lb-icon-btn" disabled={dia >= numDias - 1} onClick={() => setDia(Math.min(numDias - 1, dia + 1))} aria-label="Próximo dia"><ChevronRight size={20} /></button>
+      </div>
+
+      {groups.length === 0 ? (
+        <EmptyState icon={<Plane size={40} />} title="Nenhum gasto neste dia" message="Toque no + pra registrar um gasto." />
+      ) : (
+        groups.map(g => (
+          <div className="gc-group" key={g.categoria}>
+            <div className="gc-group-header">
+              <span>{g.categoria}</span>
+              <span className="gc-money">{gcFmtMoney(g.subtotal)}</span>
+            </div>
+            <div className="gc-list">
+              {g.items.map(item => {
+                const pagador = (trip.participantes || []).find(p => p.id === item.pagoPorId);
+                return (
+                  <button type="button" className="gc-list-row gc-list-row-btn" key={item.id} onClick={() => onEditExpense(item)}>
+                    <span className="gc-list-row-title gc-list-row-grow">
+                      <span>{item.descricao || g.categoria}</span>
+                      {pagador && <small className="gc-list-row-sub">Pago por {pagador.nome}</small>}
+                    </span>
+                    <span className="gc-row-valor-display gc-money">{gcFmtMoney(item.valor)}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ))
+      )}
+    </div>
+  );
+}
+
+function GcTripForm({ initial, onSave, onDelete, onClose }) {
+  const [nome, setNome] = useState(initial ? initial.nome : "");
+  const [destino, setDestino] = useState(initial ? initial.destino || "" : "");
+  const [dataInicio, setDataInicio] = useState(initial ? initial.dataInicio || "" : "");
+  const [dataFim, setDataFim] = useState(initial ? initial.dataFim || "" : "");
+  const [numDias, setNumDias] = useState(initial ? String(initial.numDias || 7) : "7");
+  const [participantes, setParticipantes] = useState(
+    initial && initial.participantes && initial.participantes.length
+      ? initial.participantes.map(p => ({ ...p, disponivel: p.disponivel != null ? String(p.disponivel) : "" }))
+      : [{ id: uid(), nome: "", cor: GC_TRIP_COLORS[0], disponivel: "" }]
+  );
+  const [busy, setBusy] = useState(false);
+
+  const addParticipante = () => setParticipantes(prev => [...prev, { id: uid(), nome: "", cor: GC_TRIP_COLORS[prev.length % GC_TRIP_COLORS.length], disponivel: "" }]);
+  const removeParticipante = (id) => setParticipantes(prev => prev.filter(p => p.id !== id));
+  const updateParticipante = (id, field, value) => setParticipantes(prev => prev.map(p => p.id === id ? { ...p, [field]: value } : p));
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!nome.trim()) return;
+    setBusy(true);
+    const ok = await onSave({
+      id: initial ? initial.id : uid(),
+      nome: nome.trim(),
+      destino: destino.trim(),
+      dataInicio: dataInicio || null,
+      dataFim: dataFim || null,
+      numDias: Math.max(1, parseInt(numDias, 10) || 7),
+      participantes: participantes
+        .filter(p => p.nome.trim())
+        .map(p => ({ id: p.id, nome: p.nome.trim(), cor: p.cor, disponivel: parseFloat(String(p.disponivel).replace(",", ".")) || 0 })),
+      arquivada: initial ? !!initial.arquivada : false,
+      ordem: initial ? initial.ordem || 0 : 0,
+    });
+    setBusy(false);
+    if (ok !== false) onClose();
+  };
+
+  return (
+    <Modal title={initial ? "Editar viagem" : "Nova viagem"} onClose={onClose} wide>
+      <form onSubmit={submit} className="lb-form-grid">
+        <Field label="Nome da viagem" wide>
+          <input value={nome} onChange={e => setNome(e.target.value)} placeholder="Ex.: Bahia — Arraial" autoFocus required />
+        </Field>
+        <Field label="Destino (opcional)" wide>
+          <input value={destino} onChange={e => setDestino(e.target.value)} />
+        </Field>
+        <Field label="Início (opcional)">
+          <input type="date" value={dataInicio} onChange={e => setDataInicio(e.target.value)} />
+        </Field>
+        <Field label="Fim (opcional)">
+          <input type="date" value={dataFim} onChange={e => setDataFim(e.target.value)} />
+        </Field>
+        <Field label="Dias da viagem (Dia 0 a Dia N)" wide>
+          <input type="number" inputMode="numeric" min="1" step="1" value={numDias} onChange={e => setNumDias(e.target.value)} />
+        </Field>
+
+        <div className="lb-field wide">
+          <span className="lb-field-label">Participantes</span>
+          <div className="gc-trip-participantes-form">
+            {participantes.map(p => (
+              <div className="gc-trip-participante-row" key={p.id}>
+                <input
+                  className="gc-trip-participante-cor" type="color" value={p.cor}
+                  onChange={e => updateParticipante(p.id, "cor", e.target.value)}
+                  aria-label={`Cor de ${p.nome || "participante"}`}
+                />
+                <input placeholder="Nome" value={p.nome} onChange={e => updateParticipante(p.id, "nome", e.target.value)} />
+                <input
+                  type="number" inputMode="decimal" step="0.01" placeholder="Disponível"
+                  value={p.disponivel} onChange={e => updateParticipante(p.id, "disponivel", e.target.value)}
+                />
+                {participantes.length > 1 && (
+                  <button type="button" className="lb-icon-btn" onClick={() => removeParticipante(p.id)} aria-label="Remover participante"><X size={16} /></button>
+                )}
+              </div>
+            ))}
+          </div>
+          <button type="button" className="lb-btn ghost gc-btn-sm" onClick={addParticipante}><Plus size={14} /> Participante</button>
+        </div>
+
+        <div className="lb-form-footer">
+          <div className="lb-form-actions">
+            <div className="lb-form-actions-left">
+              {initial && (
+                <button type="button" className="lb-btn danger icon-only" aria-label="Excluir" onClick={async () => {
+                  if (!confirm("Excluir esta viagem e todos os gastos dela?")) return;
+                  const ok = await onDelete(initial.id);
+                  if (ok !== false) onClose();
+                }}>
+                  <Trash2 size={16} />
+                </button>
+              )}
+            </div>
+            <div className="lb-form-actions-right">
+              <button type="button" className="lb-btn ghost" onClick={onClose}>Cancelar</button>
+              <button type="submit" className="lb-btn primary" disabled={busy}>{busy ? "Salvando..." : "Salvar"}</button>
+            </div>
+          </div>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function GcTripExpenseForm({ initial, tripId, dia, numDias, existingCategorias, participantes, onSave, onDelete, onClose }) {
+  const [categoria, setCategoria] = useState(initial ? initial.categoria : (existingCategorias[0] || ""));
+  const [descricao, setDescricao] = useState(initial ? initial.descricao || "" : "");
+  const [valor, setValor] = useState(initial && initial.valor != null ? String(initial.valor) : "");
+  const [diaSel, setDiaSel] = useState(initial ? initial.dia : dia);
+  const [pagoPorId, setPagoPorId] = useState(initial ? initial.pagoPorId || "" : (participantes[0] ? participantes[0].id : ""));
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    const v = parseFloat(String(valor).replace(",", "."));
+    if (!Number.isFinite(v) || v < 0) return;
+    setBusy(true);
+    const ok = await onSave({
+      id: initial ? initial.id : uid(),
+      tripId,
+      categoria: (categoria || "Outros").trim() || "Outros",
+      descricao: descricao.trim(),
+      dia: diaSel,
+      valor: v,
+      pagoPorId: pagoPorId || null,
+    });
+    setBusy(false);
+    if (ok !== false) onClose();
+  };
+
+  return (
+    <Modal title={initial ? "Editar gasto" : "Novo gasto"} onClose={onClose}>
+      <form onSubmit={submit} className="lb-form-grid">
+        <Field label="Categoria" wide>
+          <input value={categoria} onChange={e => setCategoria(e.target.value)} list="gc-trip-categorias" placeholder="Ex.: Hospedagem" required autoFocus />
+          <datalist id="gc-trip-categorias">
+            {existingCategorias.map(c => <option key={c} value={c} />)}
+          </datalist>
+        </Field>
+        <Field label="Descrição (opcional)" wide>
+          <input value={descricao} onChange={e => setDescricao(e.target.value)} />
+        </Field>
+        <Field label="Dia" select>
+          <select value={diaSel} onChange={e => setDiaSel(Number(e.target.value))}>
+            <option value={-1}>Pré-viagem</option>
+            {Array.from({ length: numDias }, (_, i) => i).map(i => <option key={i} value={i}>Dia {i}</option>)}
+          </select>
+        </Field>
+        <Field label="Valor">
+          <input type="number" inputMode="decimal" step="0.01" min="0" value={valor} onChange={e => setValor(e.target.value)} required />
+        </Field>
+        <Field label="Pago por" wide select>
+          <select value={pagoPorId} onChange={e => setPagoPorId(e.target.value)}>
+            <option value="">—</option>
+            {participantes.map(p => <option key={p.id} value={p.id}>{p.nome}</option>)}
+          </select>
+        </Field>
+        <div className="lb-form-footer">
+          <div className="lb-form-actions">
+            <div className="lb-form-actions-left">
+              {initial && (
+                <button type="button" className="lb-btn danger icon-only" aria-label="Excluir" onClick={async () => {
+                  if (!confirm("Excluir este gasto?")) return;
+                  const ok = await onDelete(initial.id);
+                  if (ok !== false) onClose();
+                }}>
+                  <Trash2 size={16} />
+                </button>
+              )}
+            </div>
+            <div className="lb-form-actions-right">
+              <button type="button" className="lb-btn ghost" onClick={onClose}>Cancelar</button>
+              <button type="submit" className="lb-btn primary" disabled={busy}>{busy ? "Salvando..." : "Salvar"}</button>
+            </div>
+          </div>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+/* ---------------------------------------------------------------
    SHELL DO APP (topbar + hub sheet + FAB contextual).
 ----------------------------------------------------------------*/
 const GC_NAV_ITEMS = [
@@ -2386,6 +2841,7 @@ const GC_NAV_ITEMS = [
   { value: "receitas", label: "Receitas", icon: (s) => <TrendingUp size={s} />, group: "Financeiro" },
   { value: "recorrencias", label: "Recorrências", icon: (s) => <Repeat size={s} />, group: "Financeiro" },
   { value: "investimentos", label: "Investimentos", icon: (s) => <TrendingUp size={s} />, group: "Financeiro" },
+  { value: "viagens", label: "Viagens", icon: (s) => <Plane size={s} />, group: "Financeiro" },
   { value: "sonhos", label: "Lista de Sonhos", icon: (s) => <Gift size={s} />, group: "Listas" },
   { value: "conta", label: "Conta", icon: (s) => <Utensils size={s} />, group: "Ferramentas" },
 ];
@@ -2407,12 +2863,14 @@ function gcReceitasDefaultCompetencia(ano) {
 function App({ session }) {
   const {
     expenseCategories, incomeSources, incomeEntries, expenseTemplates, expenseInstances, investmentSnapshots, wishlistItems, wishlistSavingsSnapshots,
+    trips, tripExpenses,
     loading, error, dismissError,
     saveExpenseCategory, reorderExpenseCategories, deleteExpenseCategory,
     saveIncomeSource, deleteIncomeSource, saveIncomeEntry, saveIncomeProjection,
     saveExpenseTemplate, deleteExpenseTemplate, saveExpenseInstance, deleteExpenseInstance, toggleExpenseInstancePago,
     saveInvestmentSnapshot, saveWishlistItem, deleteWishlistItem, toggleWishlistComprado,
     saveWishlistSavingsSnapshot, deleteWishlistSavingsSnapshot,
+    saveTrip, deleteTrip, saveTripExpense, deleteTripExpense,
   } = useGcData(session);
   // (deleteIncomeEntry existe no hook, ainda sem UI que remova um lançamento
   // pontual — fica pra quando a tela de Receitas ganhar essa ação.)
@@ -2427,6 +2885,10 @@ function App({ session }) {
   const [snapshotForm, setSnapshotForm] = useState(null);
   const [wishlistForm, setWishlistForm] = useState(null);
   const [wishlistSavingsForm, setWishlistSavingsForm] = useState(null);
+  const [tripAberta, setTripAberta] = useState(null);
+  const [tripDia, setTripDia] = useState(-1);
+  const [tripForm, setTripForm] = useState(null);
+  const [tripExpenseForm, setTripExpenseForm] = useState(null);
   const [despesasFabMenu, setDespesasFabMenu] = useState(false);
   const [dashboardFabMenu, setDashboardFabMenu] = useState(false);
   const [sonhosFabMenu, setSonhosFabMenu] = useState(false);
@@ -2470,6 +2932,7 @@ function App({ session }) {
   useEffect(() => {
     setTopbarFilterOpen(false);
     setHubOpen(false);
+    if (subTab !== "viagens") { setTripAberta(null); setTripDia(-1); }
   }, [subTab]);
 
   useEffect(() => {
@@ -2620,6 +3083,22 @@ function App({ session }) {
               pessoas={contaPessoas} setPessoas={setContaPessoas}
               itemForm={contaItemForm} setItemForm={setContaItemForm}
             />
+          ) : subTab === "viagens" ? (
+            tripAberta ? (
+              <GcViagemDetalhe
+                trip={trips.find(t => t.id === tripAberta)}
+                expenses={tripExpenses.filter(e => e.tripId === tripAberta)}
+                dia={tripDia} setDia={setTripDia}
+                onBack={() => setTripAberta(null)}
+                onEditTrip={() => setTripForm({ initial: trips.find(t => t.id === tripAberta) })}
+                onEditExpense={(exp) => setTripExpenseForm({ initial: exp })}
+              />
+            ) : (
+              <GcViagens
+                trips={trips} tripExpenses={tripExpenses}
+                onOpen={(id) => { setTripAberta(id); setTripDia(-1); }}
+              />
+            )
           ) : (
             <EmptyState
               icon={current ? current.icon(40) : <BarChart3 size={40} />}
@@ -2638,8 +3117,12 @@ function App({ session }) {
             else if (subTab === "investimentos") setSnapshotForm({ initialCompetencia: competenciaAtual() });
             else if (subTab === "sonhos") setSonhosFabMenu(true);
             else if (subTab === "conta") setContaItemForm({ initial: null });
+            else if (subTab === "viagens") {
+              if (tripAberta) setTripExpenseForm({ initial: null });
+              else setTripForm({ initial: null });
+            }
           }}
-          aria-label={subTab === "dashboard" ? "Adicionar" : subTab === "receitas" ? "Nova fonte de receita" : subTab === "despesas" ? "Nova despesa" : subTab === "recorrencias" ? "Nova recorrência" : subTab === "investimentos" ? "Registrar saldo" : subTab === "sonhos" ? "Adicionar" : subTab === "conta" ? "Novo item da conta" : "Adicionar"}>
+          aria-label={subTab === "dashboard" ? "Adicionar" : subTab === "receitas" ? "Nova fonte de receita" : subTab === "despesas" ? "Nova despesa" : subTab === "recorrencias" ? "Nova recorrência" : subTab === "investimentos" ? "Registrar saldo" : subTab === "sonhos" ? "Adicionar" : subTab === "conta" ? "Novo item da conta" : subTab === "viagens" ? (tripAberta ? "Novo gasto" : "Nova viagem") : "Adicionar"}>
           <Plus size={26} />
         </button>
 
@@ -2732,6 +3215,30 @@ function App({ session }) {
             onSave={saveWishlistSavingsSnapshot}
             onDelete={deleteWishlistSavingsSnapshot}
             onClose={() => setWishlistSavingsForm(null)}
+          />
+        )}
+        {tripForm && (
+          <GcTripForm
+            initial={tripForm.initial}
+            onSave={saveTrip}
+            onDelete={async (id) => { const ok = await deleteTrip(id); if (ok !== false) setTripAberta(null); return ok; }}
+            onClose={() => setTripForm(null)}
+          />
+        )}
+        {tripExpenseForm && tripAberta && (
+          <GcTripExpenseForm
+            initial={tripExpenseForm.initial}
+            tripId={tripAberta}
+            dia={tripDia}
+            numDias={Math.max(1, (trips.find(t => t.id === tripAberta) || {}).numDias || 1)}
+            existingCategorias={Array.from(new Set([
+              ...GC_TRIP_EXPENSE_CATEGORIES,
+              ...tripExpenses.filter(e => e.tripId === tripAberta).map(e => e.categoria),
+            ]))}
+            participantes={(trips.find(t => t.id === tripAberta) || {}).participantes || []}
+            onSave={saveTripExpense}
+            onDelete={deleteTripExpense}
+            onClose={() => setTripExpenseForm(null)}
           />
         )}
       </div>
@@ -3019,6 +3526,25 @@ div.gc-statcard { cursor: default; }
 .gc-conta-taxa-suffix { font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 14px; color: var(--gc-ink-soft); }
 .gc-conta-por-pessoa { border-top: 1px solid var(--gc-line); background: var(--gc-surface-2); color: var(--gc-accent); }
 .gc-conta-fields input:disabled { opacity: .55; background: var(--gc-surface-2); cursor: not-allowed; }
+
+/* ---- Viagens: header com voltar/editar, cards de participante (saldo +
+   "Disponível"), linhas de participante no formulário ---- */
+.gc-trip-header { display: flex; align-items: center; gap: var(--sp-2); }
+.gc-trip-header-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.gc-trip-header-txt strong { font-family: 'Playfair Display', serif; font-size: 18px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gc-trip-header-txt small { color: var(--gc-ink-soft); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gc-trip-participantes { display: flex; flex-direction: column; gap: var(--sp-2); }
+.gc-trip-participante {
+  display: flex; align-items: center; gap: var(--sp-3); padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--gc-line); border-radius: var(--radius-md); background: var(--gc-surface);
+}
+.gc-trip-participante-dot { flex-shrink: 0; width: 10px; height: 10px; border-radius: 50%; }
+.gc-trip-participante-nome { flex: 1; min-width: 0; font-family: 'Space Grotesk', sans-serif; font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gc-trip-participante-vals { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; text-align: right; font-family: 'Space Grotesk', sans-serif; font-size: 12px; }
+.gc-trip-participantes-form { display: flex; flex-direction: column; gap: var(--sp-2); margin-bottom: var(--sp-2); }
+.gc-trip-participante-row { display: flex; align-items: center; gap: var(--sp-2); }
+.gc-trip-participante-row input:not(.gc-trip-participante-cor) { flex: 1; min-width: 0; padding: 9px 12px; border-radius: var(--radius-pill); border: 1px solid var(--gc-line); font-family: 'Space Grotesk', sans-serif; font-size: 14px; font-weight: 600; color: var(--gc-ink); background: rgba(255,255,255,.06); }
+.gc-trip-participante-cor { flex-shrink: 0; width: 32px; height: 32px; padding: 0; border: 1px solid var(--gc-line); border-radius: var(--radius-sm); background: none; cursor: pointer; }
 
 .gc-checkbox {
   flex-shrink: 0; width: 24px; height: 24px; border-radius: var(--radius-sm); border: 1.5px solid var(--gc-line);
