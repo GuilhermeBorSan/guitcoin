@@ -4,8 +4,8 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <meta name="theme-color" content="#ffffff" />
-<link rel="icon" type="image/svg+xml" href="assets/icon.svg" />
-<link rel="apple-touch-icon" href="assets/icon.svg" />
+<link rel="icon" type="image/png" href="assets/icon.png" />
+<link rel="apple-touch-icon" href="assets/icon-180.png" />
 <link rel="manifest" href="manifest.webmanifest" />
 <title>Guitcoin</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -85,19 +85,16 @@ const Gift = (p) => <IconBase {...p}><polyline points="20 12 20 22 4 22 4 12"/><
 const Menu = (p) => <IconBase {...p}><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></IconBase>;
 const Upload = (p) => <IconBase {...p}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></IconBase>;
 const Settings = (p) => <IconBase {...p}><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></IconBase>;
+const Filter = (p) => <IconBase {...p}><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></IconBase>;
 const Utensils = (p) => <IconBase {...p}><path d="M3 2v7c0 1.1.9 2 2 2h4a2 2 0 0 0 2-2V2"/><path d="M7 2v20"/><path d="M21 15V2a5 5 0 0 0-5 5v6c0 1.1.9 2 2 2h3z"/><path d="M21 15v7"/></IconBase>;
 
-// Marca (círculo + cifrão), mesmo papel do GgFlower no Guitchelin: usada no
-// topbar e como ícone do botão que abre/fecha a gaveta lateral (outline
-// fechado, preenchido aberto).
+// Marca (logo G mira — assets/icon.png), mesmo papel do GgFlower no
+// Guitchelin: topbar e botão da gaveta (outline fechado, preenchido aberto).
 function GcCoin({ outline = false, size = 22 }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none">
-      <circle cx="12" cy="12" r="10" fill={outline ? "none" : "var(--gc-accent)"} stroke={outline ? "currentColor" : "var(--gc-accent)"} strokeWidth="1.6" />
-      <path d="M14.6 8.5h-4.2a1.9 1.9 0 0 0 0 3.8h3.2a1.9 1.9 0 0 1 0 3.8h-4.5"
-        stroke={outline ? "currentColor" : "#fff"} strokeWidth="1.6" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
-      <line x1="12" y1="6.1" x2="12" y2="17.9" stroke={outline ? "currentColor" : "#fff"} strokeWidth="1.6" strokeLinecap="round"/>
-    </svg>
+    <span className={"gc-coin" + (outline ? " outline" : "")} style={{ width: size, height: size }} aria-hidden="true">
+      <img src="assets/icon.png" width={size} height={size} alt="" draggable="false" />
+    </span>
   );
 }
 
@@ -346,6 +343,14 @@ function gcSaldoEmCaixa(snapshots) {
 function gcPoderDeCompra(saldoEmCaixa) {
   return (saldoEmCaixa / GC_PODER_COMPRA_BASE) * 100;
 }
+// Poupança da Lista de Sonhos: mesmo shape de investment_snapshots; o
+// Poder de Compra em Sonhos usa só este saldo (não soma com investimentos).
+function gcFindWishlistSavingsSnapshot(snapshots, competencia) {
+  return snapshots.find(s => s.competencia === competencia) || null;
+}
+function gcSaldoPoupancaSonhos(snapshots) {
+  return gcSaldoEmCaixa(snapshots);
+}
 // Variação entre dois snapshots consecutivos (por competência).
 // pct = null quando o saldo anterior é 0 (divisão indefinida).
 function gcVariacaoSnapshot(atual, anterior) {
@@ -586,9 +591,20 @@ const GC_DEMO_DATA = {
     { id: "demo-wish-vinil-fearless", categoria: "MISC", produto: "Vinil: Fearless (TV)", marca: "", modelo: "", link: "", obs: "", preco: 500, comprado: false },
     { id: "demo-wish-vinil-red", categoria: "MISC", produto: "Vinil: Red (TV)", marca: "", modelo: "", link: "", obs: "", preco: 500, comprado: false },
   ],
+  // Poupança dedicada à Lista de Sonhos (separada do Saldo em Caixa).
+  // Jul = R$1.200 → Poder de Compra 120,00% nessa tela.
+  wishlistSavingsSnapshots: [
+    { id: "demo-wish-sav-1", competencia: "2026-01", saldo: 400, observacao: "" },
+    { id: "demo-wish-sav-2", competencia: "2026-02", saldo: 500, observacao: "" },
+    { id: "demo-wish-sav-3", competencia: "2026-03", saldo: 650, observacao: "" },
+    { id: "demo-wish-sav-4", competencia: "2026-04", saldo: 800, observacao: "" },
+    { id: "demo-wish-sav-5", competencia: "2026-05", saldo: 950, observacao: "" },
+    { id: "demo-wish-sav-6", competencia: "2026-06", saldo: 1100, observacao: "" },
+    { id: "demo-wish-sav-7", competencia: "2026-07", saldo: 1200, observacao: "" },
+  ],
 };
 
-// ---- Dados (Firestore: as 7 coleções do app). Isolado aqui: as telas
+// ---- Dados (Firestore: as 8 coleções do app). Isolado aqui: as telas
 // nunca chamam gcFirestore direto, só conhecem os verbos save*/delete*/
 // toggle* e os arrays de dados retornados abaixo. ----
 function useGcData(session) {
@@ -608,6 +624,7 @@ function useGcData(session) {
   });
   const [investmentSnapshots, setInvestmentSnapshots] = useState(GC_IS_LOCAL ? GC_DEMO_DATA.investmentSnapshots : []);
   const [wishlistItems, setWishlistItems] = useState(GC_IS_LOCAL ? GC_DEMO_DATA.wishlistItems : []);
+  const [wishlistSavingsSnapshots, setWishlistSavingsSnapshots] = useState(GC_IS_LOCAL ? GC_DEMO_DATA.wishlistSavingsSnapshots : []);
   const [loading, setLoading] = useState(!GC_IS_LOCAL);
   const [error, setError] = useState(null);
 
@@ -615,7 +632,7 @@ function useGcData(session) {
     if (GC_IS_LOCAL || !gcFirestore) { setLoading(false); return; }
     setLoading(true);
     try {
-      const [categories, sources, entries, projections, templates, instRaw, snapshots, wishlist] = await Promise.all([
+      const [categories, sources, entries, projections, templates, instRaw, snapshots, wishlist, wishSavings] = await Promise.all([
         gcFetchAll(session, "expense_categories"),
         gcFetchAll(session, "income_sources"),
         gcFetchAll(session, "income_entries"),
@@ -624,6 +641,7 @@ function useGcData(session) {
         gcFetchAll(session, "expense_instances"),
         gcFetchAll(session, "investment_snapshots"),
         gcFetchAll(session, "wishlist_items"),
+        gcFetchAll(session, "wishlist_savings_snapshots"),
       ]);
       // Instalação nova (sem nenhuma categoria ainda): semeia as 5 categorias
       // padrão uma única vez, pra tela de Despesas não nascer vazia.
@@ -654,6 +672,7 @@ function useGcData(session) {
       setExpenseInstances(instances);
       setInvestmentSnapshots(snapshots);
       setWishlistItems(wishlist);
+      setWishlistSavingsSnapshots(wishSavings);
     } catch (err) {
       console.error(err);
       setError(gcWriteErrorMsg(err, "carregar os dados"));
@@ -796,13 +815,28 @@ function useGcData(session) {
     catch (err) { console.error(err); setError(gcWriteErrorMsg(err, "marcar o item como comprado")); await loadData(); return false; }
   };
 
+  const saveWishlistSavingsSnapshot = async (snapshot) => {
+    setWishlistSavingsSnapshots(prev => prev.some(s => s.id === snapshot.id) ? prev.map(s => s.id === snapshot.id ? snapshot : s) : [...prev, snapshot]);
+    if (GC_IS_LOCAL) return true;
+    try { await gcUpsertOne(session, "wishlist_savings_snapshots", snapshot); return true; }
+    catch (err) { console.error(err); setError(gcWriteErrorMsg(err, "salvar a poupança de sonhos")); await loadData(); return false; }
+  };
+
+  const deleteWishlistSavingsSnapshot = async (id) => {
+    setWishlistSavingsSnapshots(prev => prev.filter(s => s.id !== id));
+    if (GC_IS_LOCAL) return true;
+    try { await gcDeleteOne(session, "wishlist_savings_snapshots", id); return true; }
+    catch (err) { console.error(err); setError(gcWriteErrorMsg(err, "excluir o saldo da poupança")); await loadData(); return false; }
+  };
+
   return {
-    expenseCategories, incomeSources, incomeEntries, incomeProjections, expenseTemplates, expenseInstances, investmentSnapshots, wishlistItems,
+    expenseCategories, incomeSources, incomeEntries, incomeProjections, expenseTemplates, expenseInstances, investmentSnapshots, wishlistItems, wishlistSavingsSnapshots,
     loading, error, dismissError: () => setError(null),
     saveExpenseCategory, deleteExpenseCategory,
     saveIncomeSource, deleteIncomeSource, saveIncomeEntry, deleteIncomeEntry, saveIncomeProjection,
     saveExpenseTemplate, deleteExpenseTemplate, saveExpenseInstance, deleteExpenseInstance, toggleExpenseInstancePago,
     saveInvestmentSnapshot, saveWishlistItem, deleteWishlistItem, toggleWishlistComprado,
+    saveWishlistSavingsSnapshot, deleteWishlistSavingsSnapshot,
   };
 }
 
@@ -1635,21 +1669,54 @@ function GcInvestmentSnapshotForm({ initialCompetencia, snapshots, onSave, onClo
 }
 
 /* ---------------------------------------------------------------
-   TELA: LISTA DE SONHOS (Fase 4) — porte direto da wishlist do Guitchelin:
-   agrupada por categoria, com subtotal por grupo e total geral (só itens
-   ainda não comprados contam).
+   TELA: LISTA DE SONHOS (Fase 4) — wishlist + poupança dedicada.
+   Poder de Compra nesta tela usa só wishlist_savings_snapshots.
 ----------------------------------------------------------------*/
-function GcSonhos({ items, poderDeCompra, onToggleComprado, onEdit }) {
+function GcSonhos({ items, savingsSnapshots, onToggleComprado, onEdit, onEditSavings }) {
   const { groups, total } = gcWishlistGroups(items);
+  const saldoPoupanca = gcSaldoPoupancaSonhos(savingsSnapshots);
+  const poderDeCompra = gcPoderDeCompra(saldoPoupanca);
   const fmtPct = (v) => v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + "%";
+  const asc = savingsSnapshots.slice().sort((a, b) => a.competencia.localeCompare(b.competencia));
+  const historico = asc.slice().reverse();
   return (
     <div className="gc-screen">
-      <div className="gc-statcards gc-statcards-1">
+      <div className="gc-statcards gc-statcards-2">
+        <div className="gc-statcard">
+          <span className="gc-statcard-num gc-money">{gcFmtMoney(saldoPoupanca)}</span>
+          <span className="gc-statcard-cap">Poupança Sonhos</span>
+        </div>
         <div className="gc-statcard">
           <span className="gc-statcard-num">{fmtPct(poderDeCompra || 0)}</span>
           <span className="gc-statcard-cap">Poder de Compra</span>
         </div>
       </div>
+
+      {historico.length > 0 && (
+        <div className="gc-dashboard-section">
+          <h3 className="gc-section-title">Histórico da poupança</h3>
+          <div className="gc-list">
+            {historico.map((s, i) => {
+              const anterior = historico[i + 1] || null;
+              const variacao = gcVariacaoSnapshot(s, anterior);
+              return (
+                <button type="button" className="gc-list-row gc-list-row-btn" key={s.id} onClick={() => onEditSavings(s.competencia)}>
+                  <span className="gc-list-row-title" style={{ flex: 1 }}>{competenciaLabel(s.competencia)}</span>
+                  <span className="gc-invest-row-vals">
+                    <span className="gc-row-valor-display gc-money">{gcFmtMoney(s.saldo)}</span>
+                    {variacao && (
+                      <small className={"gc-list-row-sub " + gcDeltaTone(variacao.delta)}>
+                        {gcFmtSignedMoney(variacao.delta)} · {gcFmtSignedPct(variacao.pct)}
+                      </small>
+                    )}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {groups.length === 0 ? (
         <EmptyState icon={<Gift size={40} />} title="Nenhum item na lista" message="Toque no + pra adicionar algo que você quer comprar." />
       ) : (
@@ -1683,6 +1750,63 @@ function GcSonhos({ items, poderDeCompra, onToggleComprado, onEdit }) {
         </>
       )}
     </div>
+  );
+}
+
+function GcWishlistSavingsSnapshotForm({ initialCompetencia, snapshots, onSave, onDelete, onClose }) {
+  const [competencia, setCompetencia] = useState(initialCompetencia);
+  const [saldo, setSaldo] = useState(() => { const f = gcFindWishlistSavingsSnapshot(snapshots, initialCompetencia); return f ? String(f.saldo) : ""; });
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    const found = gcFindWishlistSavingsSnapshot(snapshots, competencia);
+    setSaldo(found ? String(found.saldo) : "");
+  }, [competencia]);
+
+  const found = gcFindWishlistSavingsSnapshot(snapshots, competencia);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setBusy(true);
+    const ok = await onSave({
+      id: found ? found.id : uid(), competencia,
+      saldo: parseFloat(String(saldo).replace(",", ".")) || 0,
+      observacao: found ? found.observacao : "",
+    });
+    setBusy(false);
+    if (ok !== false) onClose();
+  };
+
+  return (
+    <Modal title="Saldo da Poupança Sonhos" onClose={onClose}>
+      <form onSubmit={submit} className="lb-form-grid">
+        <Field label="Mês">
+          <input type="month" value={competencia} onChange={e => setCompetencia(e.target.value)} required />
+        </Field>
+        <Field label="Saldo">
+          <input type="number" inputMode="decimal" step="0.01" value={saldo} onChange={e => setSaldo(e.target.value)} required autoFocus />
+        </Field>
+        <div className="lb-form-footer">
+          <div className="lb-form-actions">
+            <div className="lb-form-actions-left">
+              {found && (
+                <button type="button" className="lb-btn danger" onClick={async () => {
+                  if (!confirm("Excluir o saldo deste mês?")) return;
+                  const ok = await onDelete(found.id);
+                  if (ok !== false) onClose();
+                }}>
+                  <Trash2 size={16} /> Excluir
+                </button>
+              )}
+            </div>
+            <div className="lb-form-actions-right">
+              <button type="button" className="lb-btn ghost" onClick={onClose}>Cancelar</button>
+              <button type="submit" className="lb-btn primary" disabled={busy}>{busy ? "Salvando..." : "Salvar"}</button>
+            </div>
+          </div>
+        </div>
+      </form>
+    </Modal>
   );
 }
 
@@ -1788,7 +1912,7 @@ function GcColumnsGrouped({ items }) {
   );
 }
 
-function GcAreaChart({ items, showValues }) {
+function GcAreaChart({ items, showValues, onClick }) {
   const max = Math.max(...items.map(i => i.value), 1);
   const w = 300, h = 120, padX = 6, padTop = showValues ? 16 : 6, padBottom = 6;
   const stepX = items.length > 1 ? (w - padX * 2) / (items.length - 1) : 0;
@@ -1796,8 +1920,17 @@ function GcAreaChart({ items, showValues }) {
   const linha = pontos.map((p, i) => (i === 0 ? "M" : "L") + p[0].toFixed(1) + " " + p[1].toFixed(1)).join(" ");
   const area = `${linha} L ${pontos[pontos.length - 1][0].toFixed(1)} ${h - padBottom} L ${pontos[0][0].toFixed(1)} ${h - padBottom} Z`;
   const padPct = (padX / w) * 100;
+  const lastIdx = pontos.length - 1;
+  const wrapProps = onClick ? {
+    role: "button",
+    tabIndex: 0,
+    onClick,
+    onKeyDown: (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onClick(); } },
+    className: "gc-area-wrap gc-area-clickable",
+    "aria-label": "Abrir Investimentos",
+  } : { className: "gc-area-wrap" };
   return (
-    <div className="gc-area-wrap">
+    <div {...wrapProps}>
       <div className="gc-area-plot">
         <svg viewBox={`0 0 ${w} ${h}`} className="gc-area-chart" preserveAspectRatio="none">
           <path d={area} className="gc-area-fill" />
@@ -1806,14 +1939,11 @@ function GcAreaChart({ items, showValues }) {
             <circle key={items[i].id || items[i].label} cx={p[0]} cy={p[1]} r="2.2" className="gc-area-dot" />
           ))}
         </svg>
-        {showValues && (
+        {showValues && lastIdx >= 0 && (
           <div className="gc-area-values" aria-hidden="true">
-            {pontos.map((p, i) => (
-              <span
-                key={"v-" + (items[i].id || items[i].label)}
-                style={{ left: (p[0] / w) * 100 + "%", top: (p[1] / h) * 100 + "%" }}
-              >{gcFmtMoneyCompact(items[i].value)}</span>
-            ))}
+            <span
+              style={{ left: (pontos[lastIdx][0] / w) * 100 + "%", top: (pontos[lastIdx][1] / h) * 100 + "%" }}
+            >{gcFmtMoneyCompact(items[lastIdx].value)}</span>
           </div>
         )}
       </div>
@@ -1826,11 +1956,20 @@ function GcAreaChart({ items, showValues }) {
   );
 }
 
-function GcDashboard({ incomeEntries, expenseInstances, investmentSnapshots, ano, onAnoChange }) {
+function GcDashboard({ incomeEntries, expenseInstances, investmentSnapshots, ano, onOpenInvestimentos }) {
   const receitaPorMes = gcReceitaPorMes(incomeEntries, ano);
   const custoPorMes = gcCustoPorMes(expenseInstances, ano);
   const saldoLiquidoPorMes = gcSaldoLiquidoPorMes(receitaPorMes, custoPorMes);
   const investimentosPorMes = gcInvestimentosPorMes(investmentSnapshots, ano);
+  // Gráfico só até o último mês com snapshot real do ano (sem carregar saldo adiante).
+  const lastSnapAno = investmentSnapshots
+    .filter(s => (s.competencia || "").startsWith(String(ano) + "-"))
+    .sort((a, b) => a.competencia.localeCompare(b.competencia))
+    .slice(-1)[0];
+  const lastChartIdx = lastSnapAno ? parseInt(lastSnapAno.competencia.slice(5), 10) - 1 : -1;
+  const investChartItems = lastChartIdx >= 0
+    ? investimentosPorMes.slice(0, lastChartIdx + 1).map((s, i) => ({ label: MONTH_LABELS[i], value: s.total }))
+    : [];
   const faturamentoAnual = gcFaturamentoAnual(incomeEntries, ano);
   const custoDeVidaAnual = gcCustoDeVidaAnual(expenseInstances, ano);
   const taxaDePoupanca = gcTaxaDePoupanca(faturamentoAnual, custoDeVidaAnual);
@@ -1841,12 +1980,6 @@ function GcDashboard({ incomeEntries, expenseInstances, investmentSnapshots, ano
 
   return (
     <div className="gc-screen">
-      <div className="gc-year-switch">
-        <button type="button" className="lb-icon-btn" onClick={() => onAnoChange(String(Number(ano) - 1))} aria-label="Ano anterior"><ChevronLeft size={20} /></button>
-        <span className="gc-month-label">{ano}</span>
-        <button type="button" className="lb-icon-btn" onClick={() => onAnoChange(String(Number(ano) + 1))} aria-label="Próximo ano"><ChevronRight size={20} /></button>
-      </div>
-
       <div className="gc-statcards gc-statcards-3">
         <div className="gc-statcard">
           <span className="gc-statcard-num gc-money">{gcFmtMoney(faturamentoAnual)}</span>
@@ -1884,11 +2017,6 @@ function GcDashboard({ incomeEntries, expenseInstances, investmentSnapshots, ano
       </div>
 
       <div className="gc-dashboard-section">
-        <h3 className="gc-section-title">Evolução dos Investimentos</h3>
-        <GcAreaChart items={investimentosPorMes.map((s, i) => ({ label: MONTH_LABELS[i], value: s.total }))} />
-      </div>
-
-      <div className="gc-dashboard-section">
         <h3 className="gc-section-title">Fluxo de Caixa</h3>
         <div className="gc-cashflow-wrap">
           <table className="gc-cashflow-table">
@@ -1898,7 +2026,6 @@ function GcDashboard({ incomeEntries, expenseInstances, investmentSnapshots, ano
                 <th>Receita</th>
                 <th>Gastos</th>
                 <th>Saldo líquido</th>
-                <th>Investimentos</th>
               </tr>
             </thead>
             <tbody>
@@ -1908,7 +2035,6 @@ function GcDashboard({ incomeEntries, expenseInstances, investmentSnapshots, ano
                   <td className="gc-money">{gcFmtMoney(receitaPorMes[i].total)}</td>
                   <td className="gc-money">{gcFmtMoney(custoPorMes[i].total)}</td>
                   <td className={"gc-money" + (saldoLiquidoPorMes[i].total < 0 ? " gc-num-red" : "")}>{gcFmtMoney(saldoLiquidoPorMes[i].total)}</td>
-                  <td className="gc-money">{gcFmtMoney(investimentosPorMes[i].total)}</td>
                 </tr>
               ))}
               <tr className="gc-cashflow-total">
@@ -1916,12 +2042,22 @@ function GcDashboard({ incomeEntries, expenseInstances, investmentSnapshots, ano
                 <td className="gc-money">{gcFmtMoney(faturamentoAnual)}</td>
                 <td className="gc-money">{gcFmtMoney(custoDeVidaAnual)}</td>
                 <td className="gc-money">{gcFmtMoney(faturamentoAnual - custoDeVidaAnual)}</td>
-                <td></td>
               </tr>
             </tbody>
           </table>
         </div>
       </div>
+
+      {investChartItems.length >= 2 && (
+        <div className="gc-dashboard-section">
+          <h3 className="gc-section-title">Evolução dos Investimentos</h3>
+          <GcAreaChart
+            items={investChartItems}
+            showValues
+            onClick={onOpenInvestimentos}
+          />
+        </div>
+      )}
     </div>
   );
 }
@@ -2143,12 +2279,13 @@ function gcReceitasDefaultCompetencia(ano) {
 
 function App({ session }) {
   const {
-    expenseCategories, incomeSources, incomeEntries, expenseTemplates, expenseInstances, investmentSnapshots, wishlistItems,
+    expenseCategories, incomeSources, incomeEntries, expenseTemplates, expenseInstances, investmentSnapshots, wishlistItems, wishlistSavingsSnapshots,
     loading, error, dismissError,
     saveExpenseCategory, deleteExpenseCategory,
     saveIncomeSource, deleteIncomeSource, saveIncomeEntry, saveIncomeProjection,
     saveExpenseTemplate, deleteExpenseTemplate, saveExpenseInstance, deleteExpenseInstance, toggleExpenseInstancePago,
     saveInvestmentSnapshot, saveWishlistItem, deleteWishlistItem, toggleWishlistComprado,
+    saveWishlistSavingsSnapshot, deleteWishlistSavingsSnapshot,
   } = useGcData(session);
   // (deleteIncomeEntry existe no hook, ainda sem UI que remova um lançamento
   // pontual — fica pra quando a tela de Receitas ganhar essa ação.)
@@ -2162,8 +2299,11 @@ function App({ session }) {
   const [templateForm, setTemplateForm] = useState(null);
   const [snapshotForm, setSnapshotForm] = useState(null);
   const [wishlistForm, setWishlistForm] = useState(null);
+  const [wishlistSavingsForm, setWishlistSavingsForm] = useState(null);
   const [despesasFabMenu, setDespesasFabMenu] = useState(false);
   const [dashboardFabMenu, setDashboardFabMenu] = useState(false);
+  const [sonhosFabMenu, setSonhosFabMenu] = useState(false);
+  const [dashboardAnoFilterOpen, setDashboardAnoFilterOpen] = useState(false);
   const [categoriesModal, setCategoriesModal] = useState(false);
   const [importing, setImporting] = useState(false);
   const [contaItens, setContaItens] = useState([]);
@@ -2172,6 +2312,27 @@ function App({ session }) {
   const [contaTaxaPct, setContaTaxaPct] = useState("10");
   const [contaPessoas, setContaPessoas] = useState("1");
   const [contaItemForm, setContaItemForm] = useState(null);
+
+  const handleToggleWishlistComprado = async (id) => {
+    const item = wishlistItems.find(i => i.id === id);
+    if (!item) return;
+    const marcandoComprado = !item.comprado;
+    if (marcandoComprado && item.preco != null && Number(item.preco) > 0) {
+      const descontar = window.confirm(`Descontar ${gcFmtMoney(item.preco)} da Poupança Sonhos?`);
+      if (descontar) {
+        const comp = competenciaAtual();
+        const found = gcFindWishlistSavingsSnapshot(wishlistSavingsSnapshots, comp);
+        const base = found ? (found.saldo || 0) : gcSaldoPoupancaSonhos(wishlistSavingsSnapshots);
+        await saveWishlistSavingsSnapshot({
+          id: found ? found.id : uid(),
+          competencia: comp,
+          saldo: Math.max(0, base - Number(item.preco)),
+          observacao: found ? (found.observacao || "") : "",
+        });
+      }
+    }
+    await toggleWishlistComprado(id);
+  };
 
   // ---- Importação inicial (temporária): escreve os mesmos dados usados no
   // modo demo (GC_DEMO_DATA, já validados contra a planilha real do Gui)
@@ -2191,6 +2352,7 @@ function App({ session }) {
       for (const i of GC_DEMO_DATA.expenseInstancesAvulsas) await saveExpenseInstance(i);
       for (const sn of GC_DEMO_DATA.investmentSnapshots) await saveInvestmentSnapshot(sn);
       for (const w of GC_DEMO_DATA.wishlistItems) await saveWishlistItem(w);
+      for (const ws of GC_DEMO_DATA.wishlistSavingsSnapshots) await saveWishlistSavingsSnapshot(ws);
       window.alert("Importação concluída! Recarregue a página pra ver os dados (e as recorrências mensais serão geradas automaticamente).");
     } catch (err) {
       console.error(err);
@@ -2206,6 +2368,17 @@ function App({ session }) {
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [sidebarOpen]);
+
+  useEffect(() => {
+    if (subTab !== "dashboard") setDashboardAnoFilterOpen(false);
+  }, [subTab]);
+
+  useEffect(() => {
+    if (!dashboardAnoFilterOpen) return;
+    const onKey = (e) => { if (e.key === "Escape") setDashboardAnoFilterOpen(false); };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [dashboardAnoFilterOpen]);
 
   const openTab = (tab) => { setSidebarOpen(false); setSubTab(tab); };
   const financeiro = GC_NAV_ITEMS.filter(i => i.group === "Financeiro");
@@ -2256,6 +2429,30 @@ function App({ session }) {
           </button>
           <span className="gc-brand"><strong>Guitcoin</strong></span>
           <span className="gc-topbar-spacer" />
+          {subTab === "dashboard" && (
+            <div className="gc-topbar-filter">
+              <button type="button" className={"lb-icon-btn" + (dashboardAnoFilterOpen ? " active" : "")}
+                onClick={() => setDashboardAnoFilterOpen(o => !o)}
+                aria-label={`Filtrar por ano (${dashboardAno})`}
+                aria-expanded={dashboardAnoFilterOpen}
+                aria-haspopup="dialog">
+                <Filter size={18} />
+              </button>
+              {dashboardAnoFilterOpen && (
+                <>
+                  <div className="gc-topbar-filter-backdrop" onClick={() => setDashboardAnoFilterOpen(false)} />
+                  <div className="gc-topbar-filter-popover" role="dialog" aria-label="Ano do dashboard">
+                    <span className="gc-topbar-filter-label">Ano</span>
+                    <div className="gc-year-switch">
+                      <button type="button" className="lb-icon-btn" onClick={() => setDashboardAno(String(Number(dashboardAno) - 1))} aria-label="Ano anterior"><ChevronLeft size={20} /></button>
+                      <span className="gc-month-label">{dashboardAno}</span>
+                      <button type="button" className="lb-icon-btn" onClick={() => setDashboardAno(String(Number(dashboardAno) + 1))} aria-label="Próximo ano"><ChevronRight size={20} /></button>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
         </header>
 
         {GC_IS_LOCAL && (
@@ -2274,7 +2471,8 @@ function App({ session }) {
           ) : subTab === "dashboard" ? (
             <GcDashboard
               incomeEntries={incomeEntries} expenseInstances={expenseInstances} investmentSnapshots={investmentSnapshots}
-              ano={dashboardAno} onAnoChange={setDashboardAno}
+              ano={dashboardAno}
+              onOpenInvestimentos={() => setSubTab("investimentos")}
             />
           ) : subTab === "receitas" ? (
             <GcReceitas
@@ -2298,9 +2496,10 @@ function App({ session }) {
           ) : subTab === "sonhos" ? (
             <GcSonhos
               items={wishlistItems}
-              poderDeCompra={gcPoderDeCompra(gcSaldoEmCaixa(investmentSnapshots))}
-              onToggleComprado={toggleWishlistComprado}
+              savingsSnapshots={wishlistSavingsSnapshots}
+              onToggleComprado={handleToggleWishlistComprado}
               onEdit={(item) => setWishlistForm({ initial: item })}
+              onEditSavings={(comp) => setWishlistSavingsForm({ initialCompetencia: comp })}
             />
           ) : subTab === "conta" ? (
             <GcConta
@@ -2331,10 +2530,10 @@ function App({ session }) {
               else if (subTab === "despesas") setDespesasFabMenu(true);
               else if (subTab === "recorrencias") setTemplateForm({ initial: null });
               else if (subTab === "investimentos") setSnapshotForm({ initialCompetencia: competenciaAtual() });
-              else if (subTab === "sonhos") setWishlistForm({ initial: null });
+              else if (subTab === "sonhos") setSonhosFabMenu(true);
               else if (subTab === "conta") setContaItemForm({ initial: null });
             }}
-            aria-label={subTab === "dashboard" ? "Adicionar" : subTab === "receitas" ? "Nova fonte de receita" : subTab === "despesas" ? "Nova despesa" : subTab === "recorrencias" ? "Nova recorrência" : subTab === "investimentos" ? "Registrar saldo" : subTab === "sonhos" ? "Novo item" : subTab === "conta" ? "Novo item da conta" : "Adicionar"}>
+            aria-label={subTab === "dashboard" ? "Adicionar" : subTab === "receitas" ? "Nova fonte de receita" : subTab === "despesas" ? "Nova despesa" : subTab === "recorrencias" ? "Nova recorrência" : subTab === "investimentos" ? "Registrar saldo" : subTab === "sonhos" ? "Adicionar" : subTab === "conta" ? "Novo item da conta" : "Adicionar"}>
             <Plus size={26} />
           </button>
           <button type="button" className={"gc-navbtn" + (subTab === "despesas" ? " active" : "")} onClick={() => setSubTab("despesas")}>
@@ -2397,6 +2596,20 @@ function App({ session }) {
             </div>
           </Modal>
         )}
+        {sonhosFabMenu && (
+          <Modal title="O que você quer fazer?" onClose={() => setSonhosFabMenu(false)}>
+            <div className="gc-fab-menu">
+              <button type="button" className="gc-fab-option" onClick={() => { setSonhosFabMenu(false); setWishlistForm({ initial: null }); }}>
+                <Gift size={22} />
+                <span className="gc-fab-option-txt"><strong>Novo item</strong><small>Algo que você quer comprar</small></span>
+              </button>
+              <button type="button" className="gc-fab-option" onClick={() => { setSonhosFabMenu(false); setWishlistSavingsForm({ initialCompetencia: competenciaAtual() }); }}>
+                <TrendingUp size={22} />
+                <span className="gc-fab-option-txt"><strong>Registrar saldo da poupança</strong><small>Atualiza a Poupança Sonhos deste mês</small></span>
+              </button>
+            </div>
+          </Modal>
+        )}
         {instanceForm && (
           <GcExpenseInstanceForm initial={instanceForm.initial} categories={expenseCategories} competencia={despesasComp} onSave={saveExpenseInstance} onDelete={deleteExpenseInstance} onClose={() => setInstanceForm(null)} />
         )}
@@ -2408,6 +2621,15 @@ function App({ session }) {
         )}
         {wishlistForm && (
           <GcWishlistItemForm initial={wishlistForm.initial} onSave={saveWishlistItem} onDelete={deleteWishlistItem} onClose={() => setWishlistForm(null)} />
+        )}
+        {wishlistSavingsForm && (
+          <GcWishlistSavingsSnapshotForm
+            initialCompetencia={wishlistSavingsForm.initialCompetencia}
+            snapshots={wishlistSavingsSnapshots}
+            onSave={saveWishlistSavingsSnapshot}
+            onDelete={deleteWishlistSavingsSnapshot}
+            onClose={() => setWishlistSavingsForm(null)}
+          />
         )}
       </div>
     </>
@@ -2758,6 +2980,8 @@ button.gc-list-row-btn:hover { background: var(--gc-surface-2); }
 .gc-legend-b { background: var(--gc-red); }
 
 .gc-area-wrap { display: flex; flex-direction: column; gap: 6px; }
+.gc-area-clickable { cursor: pointer; border-radius: var(--radius-md); outline: none; }
+.gc-area-clickable:focus-visible { box-shadow: 0 0 0 2px color-mix(in srgb, var(--gc-accent) 40%, transparent); }
 .gc-area-plot { position: relative; width: 100%; }
 .gc-area-chart { width: 100%; height: 120px; display: block; }
 .gc-area-fill { fill: color-mix(in srgb, var(--gc-accent) 22%, transparent); }
@@ -2798,7 +3022,29 @@ button.gc-list-row-btn:hover { background: var(--gc-surface-2); }
 }
 .gc-brand { display: flex; align-items: center; gap: 8px; font-family: 'Playfair Display', serif; font-size: 19px; color: var(--gc-ink); }
 .gc-brand strong { font-weight: 700; }
+.gc-coin {
+  display: inline-flex; align-items: center; justify-content: center;
+  flex-shrink: 0; border-radius: 50%; overflow: hidden;
+}
+.gc-coin img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.gc-coin:not(.outline) { background: #000; }
+.gc-coin:not(.outline) img { filter: invert(1); }
+.gc-coin.outline { background: transparent; }
 .gc-topbar-spacer { flex: 1; }
+.gc-topbar-filter { position: relative; flex-shrink: 0; }
+.gc-topbar-filter .lb-icon-btn.active { color: var(--gc-accent); }
+.gc-topbar-filter-backdrop { position: fixed; inset: 0; z-index: 25; }
+.gc-topbar-filter-popover {
+  position: absolute; top: calc(100% + 8px); right: 0; z-index: 26;
+  min-width: 168px; padding: 10px 12px 12px;
+  background: #fff; border: 1px solid var(--gc-line); border-radius: 10px;
+  box-shadow: var(--shadow);
+}
+.gc-topbar-filter-label {
+  display: block; font-family: 'Space Grotesk', sans-serif; font-size: 10.5px;
+  font-weight: 600; text-transform: uppercase; letter-spacing: .5px;
+  color: var(--gc-ink-soft); margin-bottom: 4px; text-align: center;
+}
 .gc-sidebar-toggle { flex-shrink: 0; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; background: none; border: none; color: var(--gc-accent); cursor: pointer; padding: 0; }
 .gc-sidebar-toggle:hover { color: var(--gc-accent-deep); }
 
