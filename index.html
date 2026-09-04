@@ -1102,12 +1102,12 @@ function GcIncomeSourceForm({ initial, defaultCompetencia, onSave, onDelete, onC
           <div className="lb-form-actions">
             <div className="lb-form-actions-left">
               {initial && (
-                <button type="button" className="lb-btn danger" onClick={async () => {
+                <button type="button" className="lb-btn danger icon-only" aria-label="Excluir" onClick={async () => {
                   if (!confirm("Excluir esta fonte de receita e todos os lançamentos dela?")) return;
                   const ok = await onDelete(initial.id);
                   if (ok !== false) onClose();
                 }}>
-                  <Trash2 size={16} /> Excluir
+                  <Trash2 size={16} />
                 </button>
               )}
             </div>
@@ -1314,12 +1314,12 @@ function GcExpenseInstanceForm({ initial, categories, competencia, onSave, onDel
           <div className="lb-form-actions">
             <div className="lb-form-actions-left">
               {initial && (
-                <button type="button" className="lb-btn danger" onClick={async () => {
+                <button type="button" className="lb-btn danger icon-only" aria-label="Excluir" onClick={async () => {
                   if (!confirm("Excluir esta despesa?")) return;
                   const ok = await onDelete(initial.id);
                   if (ok !== false) onClose();
                 }}>
-                  <Trash2 size={16} /> Excluir
+                  <Trash2 size={16} />
                 </button>
               )}
             </div>
@@ -1487,12 +1487,12 @@ function GcExpenseTemplateForm({ initial, categories, onSave, onDelete, onClose 
           <div className="lb-form-actions">
             <div className="lb-form-actions-left">
               {initial && (
-                <button type="button" className="lb-btn danger" onClick={async () => {
+                <button type="button" className="lb-btn danger icon-only" aria-label="Excluir" onClick={async () => {
                   if (!confirm("Excluir esta recorrência? As instâncias já geradas continuam no histórico.")) return;
                   const ok = await onDelete(initial.id);
                   if (ok !== false) onClose();
                 }}>
-                  <Trash2 size={16} /> Excluir
+                  <Trash2 size={16} />
                 </button>
               )}
             </div>
@@ -1792,12 +1792,12 @@ function GcWishlistSavingsSnapshotForm({ initialCompetencia, snapshots, onSave, 
           <div className="lb-form-actions">
             <div className="lb-form-actions-left">
               {found && (
-                <button type="button" className="lb-btn danger" onClick={async () => {
+                <button type="button" className="lb-btn danger icon-only" aria-label="Excluir" onClick={async () => {
                   if (!confirm("Excluir o saldo deste mês?")) return;
                   const ok = await onDelete(found.id);
                   if (ok !== false) onClose();
                 }}>
-                  <Trash2 size={16} /> Excluir
+                  <Trash2 size={16} />
                 </button>
               )}
             </div>
@@ -1872,12 +1872,12 @@ function GcWishlistItemForm({ initial, onSave, onDelete, onClose }) {
           <div className="lb-form-actions">
             <div className="lb-form-actions-left">
               {initial && (
-                <button type="button" className="lb-btn danger" onClick={async () => {
+                <button type="button" className="lb-btn danger icon-only" aria-label="Excluir" onClick={async () => {
                   if (!confirm("Excluir este item da lista?")) return;
                   const ok = await onDelete(initial.id);
                   if (ok !== false) onClose();
                 }}>
-                  <Trash2 size={16} /> Excluir
+                  <Trash2 size={16} />
                 </button>
               )}
             </div>
@@ -2230,12 +2230,12 @@ function GcContaItemForm({ initial, onSave, onDelete, onClose }) {
           <div className="lb-form-actions">
             <div className="lb-form-actions-left">
               {initial && (
-                <button type="button" className="lb-btn danger" onClick={() => {
+                <button type="button" className="lb-btn danger icon-only" aria-label="Excluir" onClick={() => {
                   if (!confirm("Remover este item?")) return;
                   onDelete(initial.id);
                   onClose();
                 }}>
-                  <Trash2 size={16} /> Excluir
+                  <Trash2 size={16} />
                 </button>
               )}
             </div>
