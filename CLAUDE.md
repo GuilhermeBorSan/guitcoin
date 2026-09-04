@@ -11,40 +11,63 @@ rápida, e quer confirmação antes de mudanças estruturais grandes. Plano
 completo de estruturação em `C:\Users\gui30\.claude\plans\c-users-gui30-downloads-finan-as-pdf-go-imperative-lamport.md`.
 **As 6 fases do plano (shell/auth, Receitas, Despesas+Recorrências,
 Investimentos, Lista de Sonhos, Dashboard) estão todas implementadas e
-testadas em modo demo** — falta só provisionar o Supabase de produção (ver
+testadas em modo demo** — falta só criar o projeto Firebase de produção (ver
 Roadmap) pra sair do modo demo local.
+
+**Backend: Firebase, não Supabase.** O plano original (e os apps irmãos)
+usava Supabase, mas o Gui bateu no limite de projetos free da conta
+Supabase — em vez de criar organização nova ou reaproveitar um projeto
+existente, decidiu trocar de provedor. Guitcoin é o único dos três apps
+("Gg" family) que roda em Firebase; Guitchelin e Letterborgs continuam no
+Supabase. Ver "Onde está o código" abaixo pro que muda na prática.
 
 ## Onde está o código
 - App inteiro em UM arquivo estático: `index.html` na raiz. SEM etapa de
   build: React 18 + ReactDOM + Babel Standalone (`@7`, fixo) via CDN, JSX
   transpilado no navegador. Rodar = abrir o `index.html` (dois cliques) ou o
   deploy estático na Vercel.
-- Persistência: Supabase, projeto **próprio e separado** do Guitchelin/
-  Letterborgs (ainda não provisionado — ver Roadmap). Schema/RLS em
-  `supabase/schema.sql`, rodar uma vez no SQL Editor do painel. Isolada no
-  hook `useGcData(session)` — as telas só conhecem os verbos `saveX`/
-  `deleteX`/`toggleXFlag` e os arrays de dados, nunca chamam `gcSupabase`
-  direto. RLS por dono (`user_id = auth.uid()`, default na coluna), cada
-  linha só é visível/editável por quem a criou.
+- Persistência: **Firebase** (Authentication + Firestore), projeto próprio
+  do Guitcoin (ainda não criado — ver Roadmap). SDK "compat" via CDN
+  (`firebase-app-compat.js`/`firebase-auth-compat.js`/
+  `firebase-firestore-compat.js`, mesmo espírito UMD do `supabase-js` —
+  expõe um objeto global `firebase`, sem precisar de `<script type="module">`
+  nem import). Regras de segurança em `firebase/firestore.rules`, colar no
+  console (Firestore Database → Regras → Publicar; não tem CLI/build no
+  fluxo, é só colar e publicar). Isolada no hook `useGcData(session)` — as
+  telas só conhecem os verbos `saveX`/`deleteX`/`toggleXFlag` e os arrays de
+  dados, nunca chamam `gcFirestore` direto.
+- **Modelo de dados no Firestore**: cada "tabela" do plano original virou
+  uma subcoleção em `users/{uid}/<colecao>/{id}` (`income_sources`,
+  `income_entries`, `income_projections`, `expense_templates`,
+  `expense_instances`, `investment_snapshots`, `wishlist_items`) — o próprio
+  caminho do documento já escopa os dados por usuário, substituindo o RLS
+  por `user_id = auth.uid()` do Postgres. Uma ÚNICA regra recursiva em
+  `firestore.rules` (`match /users/{uid}/{document=**}`) cobre as 7
+  coleções, em vez de 4 políticas por tabela. Sem mapeadores
+  `gcRowToX`/`gcXToRow` (diferença do Guitchelin/Postgres): o Firestore não
+  impõe snake_case, os documentos já nascem no mesmo formato camelCase que
+  o resto do app usa (`mesCobranca`, `minhaParcelaPct`, etc.).
+  `gcCollectionRef`/`gcFetchAll`/`gcUpsertOne`/`gcUpsertMany`/`gcDeleteOne`/
+  `gcUpdateFields` (topo do script) são os únicos pontos que tocam
+  `gcFirestore` — todo verbo do `useGcData` passa por eles.
 - Login OBRIGATÓRIO (app de uso pessoal, mas com auth real): tela `GcLogin`
-  (e-mail/senha via `gcSupabase.auth.signInWithPassword`), sessão observada
-  em `useGcSession` (`onAuthStateChange` + watchdog de 6s pra nunca travar em
-  "Carregando..."). Sem sessão, `GcRoot` mostra só o login; não há tela de
-  cadastro (a única conta é a do Gui, criada direto no painel). "Allow new
-  users to sign up" no painel deve ficar DESLIGADO depois de confirmar que o
-  login funciona em produção.
-- Cliente Supabase criado com `{ auth: { persistSession:true,
-  autoRefreshToken:true, lock: gcAuthLock } }`, onde `gcAuthLock` é um
-  passthrough (`async (_n,_t,fn) => fn()`) — workaround de um deadlock real
-  do `navigator.locks` em PWA iOS (herdado do Guitchelin). Não remover.
+  (e-mail/senha via `gcAuth.signInWithEmailAndPassword`), sessão observada
+  em `useGcSession` (`onAuthStateChanged` + watchdog de 6s pra nunca travar
+  em "Carregando..."). Sem sessão, `GcRoot` mostra só o login; não há tela
+  de cadastro — como o app NUNCA chama `createUserWithEmailAndPassword`,
+  simplesmente não existe caminho de auto-cadastro (diferente do Supabase,
+  não precisa de um toggle "Allow new users to sign up" pra desligar). A
+  única conta é a do Gui, criada direto no console (Authentication → Users →
+  Add user).
 - `GC_IS_LOCAL` (`localhost`/`127.0.0.1`): modo demo local — fabrica uma
-  sessão falsa e todo `save*`/`delete*` retorna sem tocar o Supabase. Permite
+  sessão falsa e todo `save*`/`delete*` retorna sem tocar o Firebase. Permite
   abrir o app com duplo clique sem depender de rede/credenciais.
-- Sem etapa de build, então não há `import.meta.env`/`process.env`: a URL e a
-  publishable key do Supabase ficam como constantes no próprio `index.html`
-  (`GC_SUPABASE_URL`/`GC_SUPABASE_ANON_KEY`, hoje só placeholders — ver
-  Roadmap). Isso é seguro porque é a publishable key (não a secret) e o RLS
-  fica ativo — expô-la no HTML é o comportamento esperado.
+- Sem etapa de build, então não há `import.meta.env`/`process.env`: a config
+  do Firebase fica como constante no próprio `index.html`
+  (`GC_FIREBASE_CONFIG`, hoje só placeholders — ver Roadmap). Isso é seguro
+  porque essa config (apiKey/authDomain/projectId/...) é pública por
+  natureza no Firebase — quem protege os dados são as Security Rules, não o
+  sigilo da config (mesmo raciocínio da anon key do Supabase + RLS).
 - Tudo prefixado `gc`/`Gc`/`.gc-*`. As primitivas de UI genéricas (`Modal`,
   `Field`, `Segmented`, `TabBar`, `EmptyState`) usam o prefixo `lb-` herdado
   do Letterborgs (mesma família compartilhada com o Guitchelin) — foram
@@ -52,28 +75,29 @@ Roadmap) pra sair do modo demo local.
   recortes parciais.
 
 ## Modelo de dados
-As sete tabelas normalizadas do plano de estruturação estão todas
-implementadas: `income_sources`/`income_entries`/`income_projections`
-(Fase 1), `expense_templates`/`expense_instances` (Fase 2),
-`investment_snapshots` (Fase 3) e `wishlist_items` (Fase 4):
+As sete coleções do plano de estruturação (adaptadas de "tabela" pra
+"subcoleção do Firestore", campos em camelCase direto, sem equivalente
+snake_case) estão todas implementadas: `income_sources`/`income_entries`/
+`income_projections` (Fase 1), `expense_templates`/`expense_instances`
+(Fase 2), `investment_snapshots` (Fase 3) e `wishlist_items` (Fase 4):
 - `income_sources` — fontes de renda: `nome`, `tipo` (`work`|`extra`),
   `ativo`, `ordem`.
-- `income_entries` — um lançamento por fonte por mês: `source_id`,
+- `income_entries` — um lançamento por fonte por mês: `sourceId`,
   `competencia` ("YYYY-MM"), `valor`.
 - `income_projections` — projeção manual anual: `ano`,
-  `renda_fixa_mensal_esperada`.
+  `rendaFixaMensalEsperada`.
 - `expense_templates` — definição de recorrência: `nome`, `grupo`
   (`casa`|`pessoal`|`pix`|`cartao_fixo`), `frequencia` (`mensal`|`anual`),
-  `mes_cobranca`, `dia_vencimento`, `valor_padrao`, `compartilhado`,
-  `compartilhado_com`, `minha_parcela_pct` (0–100), `ativo`, `data_inicio`,
-  `data_fim`, `observacao`.
+  `mesCobranca`, `diaVencimento`, `valorPadrao`, `compartilhado`,
+  `compartilhadoCom`, `minhaParcelaPct` (0–100), `ativo`, `dataInicio`,
+  `dataFim`, `observacao`.
 - `expense_instances` — uma linha por template por mês (+ compras avulsas
-  sem template): `template_id`, `grupo`, `descricao`, `competencia`,
-  `valor`, `pago`, `compartilhado`, `compartilhado_com`, `minha_parcela_pct`
+  sem template): `templateId`, `grupo`, `descricao`, `competencia`,
+  `valor`, `pago`, `compartilhado`, `compartilhadoCom`, `minhaParcelaPct`
   (campos de divisão copiados do template no momento da geração, não ao
-  vivo). **Custo de vida de uma instância = `valor * minha_parcela_pct /
+  vivo). **Custo de vida de uma instância = `valor * minhaParcelaPct /
   100`** — é assim que uma conta dividida com terceiro (ex.: contas de casa
-  divididas com o Bruno, `minha_parcela_pct = 0`) some do Custo de Vida sem
+  divididas com o Bruno, `minhaParcelaPct = 0`) some do Custo de Vida sem
   deixar de aparecer na lista com o checkbox de "pago".
 - `investment_snapshots` — saldo mensal (net worth): `competencia`, `saldo`,
   `observacao`.
@@ -135,12 +159,16 @@ reajuste de preço, ex. Disney+ subindo mês a mês).
   Formulas Module" do plano de estruturação.
 
 ## Roadmap (confirmar prioridade com o Gui antes de atacar)
-- **Provisionar o projeto Supabase do Guitcoin** (separado do Guitchelin) +
-  criar a conta única do Gui no painel + preencher `GC_SUPABASE_URL`/
-  `GC_SUPABASE_ANON_KEY` no `index.html` (hoje são placeholders). Desligar
-  "Allow new users to sign up" depois de validar login em produção. Decidido
-  fazer isso só no fim, depois de todas as fases prontas (até lá, só modo
-  demo local).
+- **Criar o projeto Firebase do Guitcoin**: console.firebase.google.com →
+  Criar projeto (plano Spark, gratuito) → Authentication → Sign-in method →
+  ativar "E-mail/senha" → Authentication → Users → Add user (a conta única
+  do Gui) → Firestore Database → Criar banco de dados (modo produção) →
+  Regras → colar o conteúdo de `firebase/firestore.rules` → Publicar →
+  Configurações do projeto → Seus apps → Adicionar app Web → copiar o objeto
+  `firebaseConfig` gerado pra dentro de `GC_FIREBASE_CONFIG` no
+  `index.html` (hoje são placeholders). Sem toggle de "permitir cadastro"
+  pra desligar (ver "Onde está o código"). Decidido fazer isso só no fim,
+  depois de todas as fases prontas (até lá, só modo demo local).
 - ~~Fase 1 — Receitas (tabelas + tela)~~ ✅ feito: `GcReceitas` (cards de
   projeção + seletor de mês + grid por fonte), `GcIncomeSourceForm`,
   `GcIncomeProjectionForm`.
@@ -174,24 +202,29 @@ reajuste de preço, ex. Disney+ subindo mês a mês).
 - Fechar o mês (marcar competências passadas como "conferidas").
 - Filtro de categoria/período na tela de Despesas (hoje só filtra por mês).
 - Hospedar na Vercel (`guitcoin.vercel.app`), repo estático sem build. URL de
-  produção precisa estar em Supabase → Authentication → URL Configuration
-  pro login funcionar lá.
+  produção precisa estar em Firebase → Authentication → Settings →
+  Authorized domains pro login funcionar lá (o Firebase bloqueia
+  `signInWithEmailAndPassword` de domínios não autorizados, mesmo com a
+  config certa).
 - Ícones reais do PWA (hoje só `assets/icon.svg` placeholder; faltam os PNGs
   32/180/192/512 referenciados pelo padrão do Guitchelin).
 
-## Migrações do Supabase (colunas novas)
-Sem etapa de build, o write manda todas as colunas — coluna nova no objeto
-exige coluna nova na tabela ANTES de publicar, senão o upsert falha. O
-`schema.sql` guarda cada `alter table ... add column if not exists ...`
-comentado; rodar a linha uma vez no SQL Editor. Última coluna adicionada:
-nenhuma ainda — schema completo, as 7 tabelas do plano de estruturação já
-existem desde a Fase 4 (`wishlist_items` foi a última a nascer).
+## Campos novos no Firestore (sem "migração" de verdade)
+Firestore é schemaless: um campo novo num objeto salvo simplesmente aparece
+no documento, sem precisar preparar nada antes (diferente do Postgres do
+Guitchelin, que exige a coluna existir antes do upsert). Documentos antigos
+sem esse campo continuam existindo — a tela precisa tratar o valor ausente
+como "falsy"/default (mesmo cuidado de `row.campo || default` que os
+mapeadores `gcRowToX` faziam antes; sem eles agora, quem lê o dado direto do
+Firestore é quem tem essa responsabilidade). Vale a pena manter, aqui, o
+registro do que foi o último campo adicionado — hoje nenhum ainda, schema
+inicial completo desde a troca de Supabase pra Firebase.
 
 ## Como verificar mudanças
 Abra o `index.html` no navegador — entra direto em modo demo local
 (`GC_IS_LOCAL`), sem tela de login. Fora do localhost (produção), sem sessão
-o app mostra só a tela de login (ainda sem credenciais reais até o Supabase
-ser provisionado).
+o app mostra só a tela de login (ainda sem credenciais reais até o projeto
+Firebase ser criado).
 
 - **Shell (Fase 0)**: navegue entre Dashboard/Despesas pela nav inferior e
   pela gaveta lateral (Recorrências/Investimentos/Lista de Sonhos ainda
@@ -259,10 +292,13 @@ ser provisionado).
   (rótulo da linha deve ficar fixo/sticky enquanto os meses rolam
   horizontalmente) e confirme que "Investimentos" também carrega o saldo
   adiante ali. Troque o ano com as setas.
-- **Persistência (todas as fases)**: depois que o Supabase de produção for
-  provisionado (ver Roadmap), recarregue a página inteira e confirme que
-  tudo sobrevive — teste definitivo de que o ciclo load/upsert do
-  `useGcData` está certo pras 7 tabelas.
+- **Persistência (todas as fases)**: depois que o projeto Firebase for
+  criado (ver Roadmap), recarregue a página inteira e confirme que tudo
+  sobrevive — teste definitivo de que o ciclo load/upsert do `useGcData`
+  está certo pras 7 coleções. Confira também que a regra de
+  `firestore.rules` está publicada (sem ela, toda leitura/escrita retorna
+  "Missing or insufficient permissions" e `gcWriteErrorMsg` deveria
+  traduzir isso pro banner pt-BR de sessão expirada).
 
 ## Convenções de trabalho
 - Responder e escrever UI sempre em pt-BR.

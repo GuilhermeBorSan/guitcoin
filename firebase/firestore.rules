@@ -1,0 +1,21 @@
+// Guitcoin: Security Rules do Firestore. Cole este arquivo inteiro em
+// Firebase Console → Firestore Database → Regras → Publicar (não precisa de
+// CLI/build, é só colar e publicar, igual rodar o schema.sql no SQL Editor
+// do Supabase).
+//
+// Modelo de dados: cada "tabela" é uma subcoleção em
+// users/{uid}/<colecao>/{id} (income_sources, income_entries,
+// income_projections, expense_templates, expense_instances,
+// investment_snapshots, wishlist_items). Uma ÚNICA regra recursiva
+// (`{document=**}`) cobre todas elas: só o dono (uid = auth.uid()) lê ou
+// escreve qualquer documento dentro do seu próprio users/{uid}/... — não
+// precisa de uma regra por coleção nem de 4 políticas por tabela como no
+// Postgres, o caminho do documento já faz esse papel.
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /users/{uid}/{document=**} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+  }
+}

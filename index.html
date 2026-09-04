@@ -16,8 +16,11 @@
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
-<!-- Cliente Supabase: auth (login por e-mail) + dados financeiros. -->
-<script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+<!-- Cliente Firebase (SDK "compat", API global tipo UMD, sem import/build):
+     auth (login por e-mail) + dados financeiros (Firestore). -->
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
 </head>
 <body>
 <div id="root"></div>
@@ -50,9 +53,10 @@ const { useState, useEffect, useMemo, useRef } = React;
 /* ---------------------------------------------------------------
    Guitcoin: app autônomo de controle financeiro pessoal. Estruturado
    seguindo o mesmo padrão de Guitchelin/Letterborgs (arquivo único, sem
-   build, Supabase). Persistência isolada no hook useGcData abaixo (as telas
-   não sabem de onde vêm os dados). Exige login. Fase 0: só shell + auth,
-   ainda sem tabelas/telas de verdade (ver CLAUDE.md > Roadmap).
+   build). Persistência via Firebase (Auth + Firestore, ver CLAUDE.md >
+   Onde está o código), isolada no hook useGcData abaixo (as telas não
+   sabem de onde vêm os dados). Exige login. Todas as 6 fases do plano
+   estão implementadas (ver CLAUDE.md > Roadmap).
 ----------------------------------------------------------------*/
 
 // ---- Ícones (SVG inline, mesmo IconBase da família Gg/Lb) ----
@@ -118,7 +122,7 @@ function gcFmtMoney(v) {
   return (v || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 }
 
-// ---- Fórmulas de Receita (funções puras, sem React/Supabase) ----
+// ---- Fórmulas de Receita (funções puras, sem React/Firebase) ----
 function gcFindIncomeEntry(entries, sourceId, competencia) {
   return entries.find(e => e.sourceId === sourceId && e.competencia === competencia) || null;
 }
@@ -298,121 +302,104 @@ function gcWishlistGroups(items) {
   return { groups, total };
 }
 // Preview local: localhost entra direto no app com dados fictícios, sem
-// gravar no Supabase de produção. Em guitcoin.vercel.app isso fica off.
+// gravar no Firebase de produção. Em guitcoin.vercel.app isso fica off.
 const GC_IS_LOCAL = ["localhost", "127.0.0.1"].includes(location.hostname);
 
-// ---- Cliente Supabase (auth + dados). TODO: preencher com o projeto
-// próprio do Guitcoin depois de provisionado no painel (ver CLAUDE.md >
+// ---- Cliente Firebase (auth + dados). TODO: preencher com a config do
+// projeto próprio do Guitcoin depois de criado no console (ver CLAUDE.md >
 // Roadmap) — hoje são placeholders, então fora do localhost o login não vai
-// funcionar até isso ser feito. ----
-const GC_SUPABASE_URL = "https://SEU-PROJETO.supabase.co";
-const GC_SUPABASE_ANON_KEY = "SUA-ANON-KEY-AQUI";
-// "lock" passthrough: o supabase-js usa navigator.locks pra coordenar o
-// refresh do token, mas em alguns navegadores iOS/PWA esse lock trava e o
-// getSession() nunca resolve (app preso em "Carregando..."). App de um
-// usuário só, sem múltiplas abas concorrentes: passar direto é seguro e
-// evita a trava (mesmo workaround do Guitchelin).
-const gcAuthLock = async (_name, _acquireTimeout, fn) => fn();
-const gcSupabase = window.supabase && !GC_IS_LOCAL
-  ? window.supabase.createClient(GC_SUPABASE_URL, GC_SUPABASE_ANON_KEY, {
-      auth: { persistSession: true, autoRefreshToken: true, lock: gcAuthLock },
-    })
-  : null;
+// funcionar até isso ser feito. A config do Firebase (apiKey etc.) é
+// pública por natureza (equivalente à anon key do Supabase): quem protege
+// os dados são as Security Rules (ver firebase/firestore.rules), não o
+// sigilo da config. ----
+const GC_FIREBASE_CONFIG = {
+  apiKey: "SUA-API-KEY-AQUI",
+  authDomain: "SEU-PROJETO.firebaseapp.com",
+  projectId: "SEU-PROJETO",
+  storageBucket: "SEU-PROJETO.appspot.com",
+  messagingSenderId: "SEU-SENDER-ID",
+  appId: "SEU-APP-ID",
+};
+const gcFirebaseApp = window.firebase && !GC_IS_LOCAL ? window.firebase.initializeApp(GC_FIREBASE_CONFIG) : null;
+const gcAuth = gcFirebaseApp ? window.firebase.auth() : null;
+const gcFirestore = gcFirebaseApp ? window.firebase.firestore() : null;
 
-// Corre uma promessa contra um timeout. Auth do supabase-js pode travar sem
-// nunca rejeitar (deadlock do navigator.locks); isso garante que a tela não
-// fique presa pra sempre.
+// Corre uma promessa contra um timeout, pra nenhuma tela ficar presa pra
+// sempre em "Carregando..." se a rede cair no meio de uma chamada.
 function gcWithTimeout(promise, ms, label) {
   let t;
   const timeout = new Promise((_, reject) => { t = setTimeout(() => reject(new Error(label || "timeout")), ms); });
   return Promise.race([promise, timeout]).finally(() => clearTimeout(t));
 }
 
-// Traduz o erro cru do Supabase/Postgres numa dica acionável em pt-BR.
+// Traduz o erro cru do Firebase numa dica acionável em pt-BR.
 function gcWriteErrorMsg(error, verbo) {
+  const code = String((error && error.code) || "");
   const msg = String((error && error.message) || error || "");
-  if (/row-level security/i.test(msg)) {
-    return `Não consegui ${verbo}: parece que a sessão expirou. Saia e entre de novo.`;
+  if (code === "auth/invalid-credential" || code === "auth/wrong-password" || code === "auth/user-not-found") {
+    return "E-mail ou senha inválidos.";
   }
-  if (/does not exist|could not find|schema cache/i.test(msg)) {
-    return `Não consegui ${verbo}: falta rodar o supabase/schema.sql mais recente no SQL Editor.`;
+  if (code === "permission-denied" || /permission/i.test(msg)) {
+    return `Não consegui ${verbo}: parece que a sessão expirou. Saia e entre de novo.`;
   }
   return `Não consegui ${verbo}. Tenta de novo em alguns segundos.`;
 }
 
 // ---- Sessão (login por e-mail/senha). App exige login; sem sessão não há
-// leitura/escrita nas tabelas (RLS por user_id = auth.uid()). ----
+// leitura/escrita nos dados (Security Rules por uid, ver firestore.rules).
+// `session.user.id` é o uid — mesmo formato usado nas duas fases (demo e
+// produção), pra `useGcData` nunca precisar diferenciar as duas. ----
 function useGcSession() {
   const [session, setSession] = useState(GC_IS_LOCAL ? { user: { id: "demo-local", email: "demo@local" } } : undefined);
   useEffect(() => {
     if (GC_IS_LOCAL) return;
-    if (!gcSupabase) { setSession(null); return; }
-    gcSupabase.auth.getSession()
-      .then(({ data }) => setSession(data.session ?? null))
-      .catch((e) => { console.error(e); setSession(prev => prev === undefined ? null : prev); });
-    const { data: sub } = gcSupabase.auth.onAuthStateChange((_event, s) => setSession(s ?? null));
+    if (!gcAuth) { setSession(null); return; }
+    const unsubscribe = gcAuth.onAuthStateChanged(
+      (user) => setSession(user ? { user: { id: user.uid, email: user.email } } : null),
+      (e) => { console.error(e); setSession(prev => prev === undefined ? null : prev); }
+    );
     // Watchdog: se o auth travar na inicialização, não deixa o app preso em
     // "Carregando..." pra sempre. Cai pro login depois de alguns segundos.
     const watchdog = setTimeout(() => setSession(prev => prev === undefined ? null : prev), 6000);
-    return () => { clearTimeout(watchdog); sub.subscription.unsubscribe(); };
+    return () => { clearTimeout(watchdog); unsubscribe(); };
   }, []);
   return session;
 }
 
-// ---- Mapeamento de linhas (Supabase snake_case <-> JS camelCase). Cada
-// tabela ganha seu par gcRowToX/gcXToRow, todo campo traduzido à mão (mesmo
-// padrão do Guitchelin). ----
-const gcRowToIncomeSource = (row) => ({ id: row.id, nome: row.nome, tipo: row.tipo || "work", ativo: row.ativo !== false, ordem: row.ordem || 0 });
-const gcIncomeSourceToRow = (s) => ({ id: s.id, nome: s.nome, tipo: s.tipo || "work", ativo: s.ativo !== false, ordem: s.ordem || 0 });
-const gcRowToIncomeEntry = (row) => ({ id: row.id, sourceId: row.source_id, competencia: row.competencia, valor: Number(row.valor) || 0 });
-const gcIncomeEntryToRow = (e) => ({ id: e.id, source_id: e.sourceId, competencia: e.competencia, valor: e.valor || 0 });
-const gcRowToIncomeProjection = (row) => ({ id: row.id, ano: String(row.ano), rendaFixaMensalEsperada: Number(row.renda_fixa_mensal_esperada) || 0 });
-const gcIncomeProjectionToRow = (p) => ({ id: p.id, ano: Number(p.ano), renda_fixa_mensal_esperada: p.rendaFixaMensalEsperada || 0 });
-const gcRowToExpenseTemplate = (row) => ({
-  id: row.id, nome: row.nome, grupo: row.grupo, frequencia: row.frequencia || "mensal",
-  mesCobranca: row.mes_cobranca || null, diaVencimento: row.dia_vencimento || null,
-  valorPadrao: Number(row.valor_padrao) || 0, compartilhado: !!row.compartilhado,
-  compartilhadoCom: row.compartilhado_com || "",
-  minhaParcelaPct: row.minha_parcela_pct != null ? Number(row.minha_parcela_pct) : 100,
-  ativo: row.ativo !== false, dataInicio: row.data_inicio, dataFim: row.data_fim || null,
-  observacao: row.observacao || "",
-});
-const gcExpenseTemplateToRow = (t) => ({
-  id: t.id, nome: t.nome, grupo: t.grupo, frequencia: t.frequencia || "mensal",
-  mes_cobranca: t.mesCobranca || null, dia_vencimento: t.diaVencimento || null,
-  valor_padrao: t.valorPadrao || 0, compartilhado: !!t.compartilhado,
-  compartilhado_com: t.compartilhadoCom || null,
-  minha_parcela_pct: t.minhaParcelaPct != null ? t.minhaParcelaPct : 100,
-  ativo: t.ativo !== false, data_inicio: t.dataInicio, data_fim: t.dataFim || null,
-  observacao: t.observacao || null,
-});
-const gcRowToExpenseInstance = (row) => ({
-  id: row.id, templateId: row.template_id || null, grupo: row.grupo, descricao: row.descricao,
-  competencia: row.competencia, valor: Number(row.valor) || 0, pago: !!row.pago,
-  compartilhado: !!row.compartilhado, compartilhadoCom: row.compartilhado_com || "",
-  minhaParcelaPct: row.minha_parcela_pct != null ? Number(row.minha_parcela_pct) : 100,
-});
-const gcExpenseInstanceToRow = (i) => ({
-  id: i.id, template_id: i.templateId || null, grupo: i.grupo, descricao: i.descricao,
-  competencia: i.competencia, valor: i.valor || 0, pago: !!i.pago,
-  compartilhado: !!i.compartilhado, compartilhado_com: i.compartilhadoCom || null,
-  minha_parcela_pct: i.minhaParcelaPct != null ? i.minhaParcelaPct : 100,
-});
-const gcRowToInvestmentSnapshot = (row) => ({ id: row.id, competencia: row.competencia, saldo: Number(row.saldo) || 0, observacao: row.observacao || "" });
-const gcInvestmentSnapshotToRow = (s) => ({ id: s.id, competencia: s.competencia, saldo: s.saldo || 0, observacao: s.observacao || null });
-const gcRowToWishlistItem = (row) => ({
-  id: row.id, categoria: row.categoria || "MISC", produto: row.produto,
-  marca: row.marca || "", modelo: row.modelo || "", link: row.link || "", obs: row.obs || "",
-  preco: row.preco != null ? Number(row.preco) : null, comprado: !!row.comprado,
-});
-const gcWishlistItemToRow = (i) => ({
-  id: i.id, categoria: i.categoria || "MISC", produto: i.produto,
-  marca: i.marca || null, modelo: i.modelo || null, link: i.link || null, obs: i.obs || null,
-  preco: i.preco != null ? i.preco : null, comprado: !!i.comprado,
-});
+// ---- Firestore: cada "tabela" vira uma subcoleção em
+// users/{uid}/<colecao>/{id} — o próprio caminho do documento já escopa os
+// dados por usuário (equivalente ao `user_id = auth.uid()` do Postgres),
+// protegido por uma única regra recursiva em firestore.rules. Sem
+// mapeadores gcRowToX/gcXToRow (diferença do Guitchelin/Postgres): o
+// Firestore não impõe snake_case, então os documentos já nascem no mesmo
+// formato camelCase que o resto do app usa. ----
+function gcCollectionRef(session, colecao) {
+  return gcFirestore.collection("users").doc(session.user.id).collection(colecao);
+}
+async function gcFetchAll(session, colecao) {
+  const snap = await gcCollectionRef(session, colecao).get();
+  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+}
+async function gcUpsertOne(session, colecao, obj) {
+  const { id, ...data } = obj;
+  await gcCollectionRef(session, colecao).doc(id).set(data);
+}
+async function gcUpsertMany(session, colecao, objs) {
+  if (!objs.length) return;
+  const batch = gcFirestore.batch();
+  const ref = gcCollectionRef(session, colecao);
+  objs.forEach(obj => { const { id, ...data } = obj; batch.set(ref.doc(id), data); });
+  await batch.commit();
+}
+async function gcDeleteOne(session, colecao, id) {
+  await gcCollectionRef(session, colecao).doc(id).delete();
+}
+async function gcUpdateFields(session, colecao, id, fields) {
+  await gcCollectionRef(session, colecao).doc(id).update(fields);
+}
 
 // ---- Demo local (GC_IS_LOCAL): dados fictícios pra abrir o app sem
-// Supabase, com os números reais da planilha original (WriteChoice/
+// Firebase, com os números reais da planilha original (WriteChoice/
 // Cambridge, Jan–Jul/2026). ----
 const GC_DEMO_DATA = {
   incomeSources: [
@@ -483,11 +470,9 @@ const GC_DEMO_DATA = {
   ],
 };
 
-// ---- Dados (Supabase: tabelas de Receita nesta fase; Despesas/
-// Recorrências/Investimentos/Sonhos entram nas próximas). Isolado aqui: as
-// telas só conhecem saveIncomeSource/deleteIncomeSource/saveIncomeEntry/
-// deleteIncomeEntry/saveIncomeProjection e os arrays incomeSources/
-// incomeEntries/incomeProjections. ----
+// ---- Dados (Firestore: as 7 coleções do app). Isolado aqui: as telas
+// nunca chamam gcFirestore direto, só conhecem os verbos save*/delete*/
+// toggle* e os arrays de dados retornados abaixo. ----
 function useGcData(session) {
   const [incomeSources, setIncomeSources] = useState(GC_IS_LOCAL ? GC_DEMO_DATA.incomeSources : []);
   const [incomeEntries, setIncomeEntries] = useState(GC_IS_LOCAL ? GC_DEMO_DATA.incomeEntries : []);
@@ -508,42 +493,37 @@ function useGcData(session) {
   const [error, setError] = useState(null);
 
   const loadData = async () => {
-    if (GC_IS_LOCAL || !gcSupabase) { setLoading(false); return; }
+    if (GC_IS_LOCAL || !gcFirestore) { setLoading(false); return; }
     setLoading(true);
     try {
-      const [srcRes, entRes, projRes, tplRes, instRes, invRes, wishRes] = await Promise.all([
-        gcSupabase.from("income_sources").select("*").order("ordem", { ascending: true }),
-        gcSupabase.from("income_entries").select("*").order("competencia", { ascending: true }),
-        gcSupabase.from("income_projections").select("*").order("ano", { ascending: true }),
-        gcSupabase.from("expense_templates").select("*").order("nome", { ascending: true }),
-        gcSupabase.from("expense_instances").select("*").order("competencia", { ascending: true }),
-        gcSupabase.from("investment_snapshots").select("*").order("competencia", { ascending: true }),
-        gcSupabase.from("wishlist_items").select("*").order("produto", { ascending: true }),
+      const [sources, entries, projections, templates, instRaw, snapshots, wishlist] = await Promise.all([
+        gcFetchAll(session, "income_sources"),
+        gcFetchAll(session, "income_entries"),
+        gcFetchAll(session, "income_projections"),
+        gcFetchAll(session, "expense_templates"),
+        gcFetchAll(session, "expense_instances"),
+        gcFetchAll(session, "investment_snapshots"),
+        gcFetchAll(session, "wishlist_items"),
       ]);
-      if (srcRes.error) throw srcRes.error;
-      if (entRes.error) throw entRes.error;
-      if (projRes.error) throw projRes.error;
-      if (tplRes.error) throw tplRes.error;
-      if (instRes.error) throw instRes.error;
-      if (invRes.error) throw invRes.error;
-      if (wishRes.error) throw wishRes.error;
-      const templates = (tplRes.data || []).map(gcRowToExpenseTemplate);
-      let instances = (instRes.data || []).map(gcRowToExpenseInstance);
+      let instances = instRaw;
       // Geração lazy: cria só as instâncias que faltam até o mês atual e já
-      // grava de volta, pra não repetir o cálculo em todo load.
+      // grava de volta (batch), pra não repetir o cálculo em todo load.
       const novas = gcGenerateMissingInstances(templates, instances, competenciaAtual());
       if (novas.length) {
-        const { error: genErr } = await gcSupabase.from("expense_instances").upsert(novas.map(gcExpenseInstanceToRow));
-        if (genErr) console.error(genErr);
-        else instances = [...instances, ...novas];
+        try {
+          await gcUpsertMany(session, "expense_instances", novas);
+          instances = [...instances, ...novas];
+        } catch (genErr) {
+          console.error(genErr);
+        }
       }
-      setIncomeSources((srcRes.data || []).map(gcRowToIncomeSource));
-      setIncomeEntries((entRes.data || []).map(gcRowToIncomeEntry));
-      setIncomeProjections((projRes.data || []).map(gcRowToIncomeProjection));
+      setIncomeSources(sources);
+      setIncomeEntries(entries);
+      setIncomeProjections(projections);
       setExpenseTemplates(templates);
       setExpenseInstances(instances);
-      setInvestmentSnapshots((invRes.data || []).map(gcRowToInvestmentSnapshot));
-      setWishlistItems((wishRes.data || []).map(gcRowToWishlistItem));
+      setInvestmentSnapshots(snapshots);
+      setWishlistItems(wishlist);
     } catch (err) {
       console.error(err);
       setError(gcWriteErrorMsg(err, "carregar os dados"));
@@ -557,77 +537,75 @@ function useGcData(session) {
   const saveIncomeSource = async (source) => {
     setIncomeSources(prev => prev.some(s => s.id === source.id) ? prev.map(s => s.id === source.id ? source : s) : [...prev, source]);
     if (GC_IS_LOCAL) return true;
-    const { error: err } = await gcSupabase.from("income_sources").upsert(gcIncomeSourceToRow(source));
-    if (err) { console.error(err); setError(gcWriteErrorMsg(err, "salvar a fonte de receita")); await loadData(); return false; }
-    return true;
+    try { await gcUpsertOne(session, "income_sources", source); return true; }
+    catch (err) { console.error(err); setError(gcWriteErrorMsg(err, "salvar a fonte de receita")); await loadData(); return false; }
   };
 
   const deleteIncomeSource = async (id) => {
     setIncomeSources(prev => prev.filter(s => s.id !== id));
     setIncomeEntries(prev => prev.filter(e => e.sourceId !== id));
     if (GC_IS_LOCAL) return true;
-    const { error: err } = await gcSupabase.from("income_sources").delete().eq("id", id);
-    if (err) { console.error(err); setError(gcWriteErrorMsg(err, "excluir a fonte de receita")); await loadData(); return false; }
-    return true;
+    try { await gcDeleteOne(session, "income_sources", id); return true; }
+    catch (err) { console.error(err); setError(gcWriteErrorMsg(err, "excluir a fonte de receita")); await loadData(); return false; }
   };
 
   const saveIncomeEntry = async (entry) => {
     setIncomeEntries(prev => prev.some(e => e.id === entry.id) ? prev.map(e => e.id === entry.id ? entry : e) : [...prev, entry]);
     if (GC_IS_LOCAL) return true;
-    const { error: err } = await gcSupabase.from("income_entries").upsert(gcIncomeEntryToRow(entry));
-    if (err) { console.error(err); setError(gcWriteErrorMsg(err, "salvar a receita do mês")); await loadData(); return false; }
-    return true;
+    try { await gcUpsertOne(session, "income_entries", entry); return true; }
+    catch (err) { console.error(err); setError(gcWriteErrorMsg(err, "salvar a receita do mês")); await loadData(); return false; }
   };
 
   const deleteIncomeEntry = async (id) => {
     setIncomeEntries(prev => prev.filter(e => e.id !== id));
     if (GC_IS_LOCAL) return true;
-    const { error: err } = await gcSupabase.from("income_entries").delete().eq("id", id);
-    if (err) { console.error(err); setError(gcWriteErrorMsg(err, "excluir a receita do mês")); await loadData(); return false; }
-    return true;
+    try { await gcDeleteOne(session, "income_entries", id); return true; }
+    catch (err) { console.error(err); setError(gcWriteErrorMsg(err, "excluir a receita do mês")); await loadData(); return false; }
   };
 
   const saveIncomeProjection = async (projection) => {
     setIncomeProjections(prev => prev.some(p => p.id === projection.id) ? prev.map(p => p.id === projection.id ? projection : p) : [...prev, projection]);
     if (GC_IS_LOCAL) return true;
-    const { error: err } = await gcSupabase.from("income_projections").upsert(gcIncomeProjectionToRow(projection));
-    if (err) { console.error(err); setError(gcWriteErrorMsg(err, "salvar a projeção")); await loadData(); return false; }
-    return true;
+    try { await gcUpsertOne(session, "income_projections", projection); return true; }
+    catch (err) { console.error(err); setError(gcWriteErrorMsg(err, "salvar a projeção")); await loadData(); return false; }
   };
 
   const saveExpenseTemplate = async (t) => {
     setExpenseTemplates(prev => prev.some(x => x.id === t.id) ? prev.map(x => x.id === t.id ? t : x) : [...prev, t]);
     if (GC_IS_LOCAL) return true;
-    const { error: err } = await gcSupabase.from("expense_templates").upsert(gcExpenseTemplateToRow(t));
-    if (err) { console.error(err); setError(gcWriteErrorMsg(err, "salvar a recorrência")); await loadData(); return false; }
-    return true;
+    try { await gcUpsertOne(session, "expense_templates", t); return true; }
+    catch (err) { console.error(err); setError(gcWriteErrorMsg(err, "salvar a recorrência")); await loadData(); return false; }
   };
 
   // Apagar um template não apaga o histórico já gerado: as instâncias ficam
-  // órfãs (templateId null), igual ao "on delete set null" da FK no banco.
+  // órfãs (templateId null) — no Firestore isso é feito à mão aqui (não há
+  // "on delete set null" automático de FK como no Postgres).
   const deleteExpenseTemplate = async (id) => {
     setExpenseTemplates(prev => prev.filter(t => t.id !== id));
+    const orfas = expenseInstances.filter(i => i.templateId === id);
     setExpenseInstances(prev => prev.map(i => i.templateId === id ? { ...i, templateId: null } : i));
     if (GC_IS_LOCAL) return true;
-    const { error: err } = await gcSupabase.from("expense_templates").delete().eq("id", id);
-    if (err) { console.error(err); setError(gcWriteErrorMsg(err, "excluir a recorrência")); await loadData(); return false; }
-    return true;
+    try {
+      await gcDeleteOne(session, "expense_templates", id);
+      await Promise.all(orfas.map(i => gcUpdateFields(session, "expense_instances", i.id, { templateId: null })));
+      return true;
+    } catch (err) {
+      console.error(err); setError(gcWriteErrorMsg(err, "excluir a recorrência")); await loadData(); return false;
+    }
   };
 
   const saveExpenseInstance = async (inst) => {
     setExpenseInstances(prev => prev.some(i => i.id === inst.id) ? prev.map(i => i.id === inst.id ? inst : i) : [...prev, inst]);
     if (GC_IS_LOCAL) return true;
-    const { error: err } = await gcSupabase.from("expense_instances").upsert(gcExpenseInstanceToRow(inst));
-    if (err) { console.error(err); setError(gcWriteErrorMsg(err, "salvar a despesa")); await loadData(); return false; }
-    return true;
+    try { await gcUpsertOne(session, "expense_instances", inst); return true; }
+    catch (err) { console.error(err); setError(gcWriteErrorMsg(err, "salvar a despesa")); await loadData(); return false; }
   };
 
   const deleteExpenseInstance = async (id) => {
     setExpenseInstances(prev => prev.filter(i => i.id !== id));
     if (GC_IS_LOCAL) return true;
-    const { error: err } = await gcSupabase.from("expense_instances").delete().eq("id", id);
-    if (err) { console.error(err); setError(gcWriteErrorMsg(err, "excluir a despesa")); await loadData(); return false; }
-    return true;
+    try { await gcDeleteOne(session, "expense_instances", id); return true; }
+    catch (err) { console.error(err); setError(gcWriteErrorMsg(err, "excluir a despesa")); await loadData(); return false; }
   };
 
   const toggleExpenseInstancePago = async (id) => {
@@ -635,33 +613,29 @@ function useGcData(session) {
     setExpenseInstances(prev => prev.map(i => { if (i.id !== id) return i; next = { ...i, pago: !i.pago }; return next; }));
     if (GC_IS_LOCAL) return true;
     if (!next) return false;
-    const { error: err } = await gcSupabase.from("expense_instances").update({ pago: next.pago }).eq("id", id);
-    if (err) { console.error(err); setError(gcWriteErrorMsg(err, "marcar a despesa como paga")); await loadData(); return false; }
-    return true;
+    try { await gcUpdateFields(session, "expense_instances", id, { pago: next.pago }); return true; }
+    catch (err) { console.error(err); setError(gcWriteErrorMsg(err, "marcar a despesa como paga")); await loadData(); return false; }
   };
 
   const saveInvestmentSnapshot = async (snapshot) => {
     setInvestmentSnapshots(prev => prev.some(s => s.id === snapshot.id) ? prev.map(s => s.id === snapshot.id ? snapshot : s) : [...prev, snapshot]);
     if (GC_IS_LOCAL) return true;
-    const { error: err } = await gcSupabase.from("investment_snapshots").upsert(gcInvestmentSnapshotToRow(snapshot));
-    if (err) { console.error(err); setError(gcWriteErrorMsg(err, "salvar o saldo")); await loadData(); return false; }
-    return true;
+    try { await gcUpsertOne(session, "investment_snapshots", snapshot); return true; }
+    catch (err) { console.error(err); setError(gcWriteErrorMsg(err, "salvar o saldo")); await loadData(); return false; }
   };
 
   const saveWishlistItem = async (item) => {
     setWishlistItems(prev => prev.some(i => i.id === item.id) ? prev.map(i => i.id === item.id ? item : i) : [...prev, item]);
     if (GC_IS_LOCAL) return true;
-    const { error: err } = await gcSupabase.from("wishlist_items").upsert(gcWishlistItemToRow(item));
-    if (err) { console.error(err); setError(gcWriteErrorMsg(err, "salvar o item")); await loadData(); return false; }
-    return true;
+    try { await gcUpsertOne(session, "wishlist_items", item); return true; }
+    catch (err) { console.error(err); setError(gcWriteErrorMsg(err, "salvar o item")); await loadData(); return false; }
   };
 
   const deleteWishlistItem = async (id) => {
     setWishlistItems(prev => prev.filter(i => i.id !== id));
     if (GC_IS_LOCAL) return true;
-    const { error: err } = await gcSupabase.from("wishlist_items").delete().eq("id", id);
-    if (err) { console.error(err); setError(gcWriteErrorMsg(err, "excluir o item")); await loadData(); return false; }
-    return true;
+    try { await gcDeleteOne(session, "wishlist_items", id); return true; }
+    catch (err) { console.error(err); setError(gcWriteErrorMsg(err, "excluir o item")); await loadData(); return false; }
   };
 
   const toggleWishlistComprado = async (id) => {
@@ -669,9 +643,8 @@ function useGcData(session) {
     setWishlistItems(prev => prev.map(i => { if (i.id !== id) return i; next = { ...i, comprado: !i.comprado }; return next; }));
     if (GC_IS_LOCAL) return true;
     if (!next) return false;
-    const { error: err } = await gcSupabase.from("wishlist_items").update({ comprado: next.comprado }).eq("id", id);
-    if (err) { console.error(err); setError(gcWriteErrorMsg(err, "marcar o item como comprado")); await loadData(); return false; }
-    return true;
+    try { await gcUpdateFields(session, "wishlist_items", id, { comprado: next.comprado }); return true; }
+    catch (err) { console.error(err); setError(gcWriteErrorMsg(err, "marcar o item como comprado")); await loadData(); return false; }
   };
 
   return {
@@ -1661,7 +1634,7 @@ function App({ session }) {
           ))}
         </nav>
         <span className="gc-sidebar-spacer" />
-        <button type="button" className="gc-sidebar-link gc-sidebar-signout" onClick={() => { if (!GC_IS_LOCAL && gcSupabase) gcSupabase.auth.signOut(); }} aria-label="Sair">
+        <button type="button" className="gc-sidebar-link gc-sidebar-signout" onClick={() => { if (!GC_IS_LOCAL && gcAuth) gcAuth.signOut(); }} aria-label="Sair">
           <LogOut size={18} /> <span>Sair</span>
         </button>
       </aside>
@@ -1677,7 +1650,7 @@ function App({ session }) {
         </header>
 
         {GC_IS_LOCAL && (
-          <div className="gc-demo-banner">Modo local: dados de exemplo. Nada disso vai pro Supabase.</div>
+          <div className="gc-demo-banner">Modo local: dados de exemplo. Nada disso vai pro Firebase.</div>
         )}
         {error && (
           <div className="gc-error-banner" role="alert">
@@ -1789,8 +1762,9 @@ function App({ session }) {
   );
 }
 
-// ---- Login (e-mail/senha). App é de uso pessoal: sem cadastro pela tela,
-// a conta já existe no Supabase. ----
+// ---- Login (e-mail/senha). App é de uso pessoal: sem cadastro pela tela
+// (nunca chamamos createUserWithEmailAndPassword), a conta já existe,
+// criada direto no console do Firebase (Authentication > Users). ----
 function GcLogin() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -1799,15 +1773,16 @@ function GcLogin() {
 
   const onSubmit = async (e) => {
     e.preventDefault();
-    if (!gcSupabase) { setError("Supabase não está configurado ainda (ver CLAUDE.md > Roadmap)."); return; }
+    if (!gcAuth) { setError("Firebase não está configurado ainda (ver CLAUDE.md > Roadmap)."); return; }
     setBusy(true); setError("");
     try {
-      const { error } = await gcWithTimeout(
-        gcSupabase.auth.signInWithPassword({ email, password }), 15000, "timeout");
-      if (error) setError("E-mail ou senha inválidos.");
+      await gcWithTimeout(gcAuth.signInWithEmailAndPassword(email, password), 15000, "timeout");
     } catch (err) {
-      console.error(err);
-      setError("A conexão com o login travou. Feche o app por completo (não só minimizar) e abra de novo.");
+      if (err && err.code) { setError("E-mail ou senha inválidos."); }
+      else {
+        console.error(err);
+        setError("A conexão com o login travou. Feche o app por completo (não só minimizar) e abra de novo.");
+      }
     } finally {
       setBusy(false);
     }
