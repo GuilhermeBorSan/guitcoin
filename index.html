@@ -154,13 +154,21 @@ function gcProjecaoTotalAno(rendaFixaAnual, extraAcumuladoYTD) {
 // uma categoria referenciada em algum lugar já tenha sido apagada.
 const GC_EXPENSE_GROUPS_SEED = [
   { id: "casa", nome: "Casa", ordem: 0 },
-  { id: "pessoal", nome: "Pessoal", ordem: 1 },
-  { id: "pix", nome: "PIX", ordem: 2 },
-  { id: "cartao_fixo", nome: "Cartão fixo", ordem: 3 },
-  { id: "compras", nome: "Compras", ordem: 4 },
+  { id: "saude", nome: "Saúde", ordem: 1 },
+  { id: "assinaturas", nome: "Assinaturas", ordem: 2 },
+  { id: "pessoal", nome: "Pessoal", ordem: 3 },
+  { id: "trabalho", nome: "Trabalho", ordem: 4 },
 ];
 function gcExpenseGroupLabel(grupo, categories) {
   return ((categories || []).find(g => g.id === grupo) || {}).nome || grupo;
+}
+// Documentos antigos sem valorTipo: treat as fixo (não pedem confirmação).
+function gcValorTipo(template) {
+  return template && template.valorTipo === "variavel" ? "variavel" : "fixo";
+}
+// Documentos antigos sem valorConfirmado: já eram dados finais.
+function gcValorConfirmado(instance) {
+  return instance && instance.valorConfirmado === false ? false : true;
 }
 // Custo de vida de UMA instância: a parte que é minha de verdade. Uma conta
 // dividida com terceiro (minhaParcelaPct = 0) some do custo de vida sem
@@ -180,20 +188,37 @@ function gcCustoMes(instances, competencia) {
 }
 function gcGroupInstances(instances, competencia, categories) {
   const doMes = gcInstancesForCompetencia(instances, competencia);
-  return (categories || [])
-    .slice()
-    .sort((a, b) => (a.ordem || 0) - (b.ordem || 0))
+  const cats = (categories || []).slice().sort((a, b) => (a.ordem || 0) - (b.ordem || 0));
+  const known = new Set(cats.map(g => g.id));
+  const grupos = cats
     .map(g => {
       const items = doMes.filter(i => i.grupo === g.id).sort((a, b) => (a.descricao || "").localeCompare(b.descricao || ""));
       return { value: g.id, label: g.nome, items, total: items.reduce((s, i) => s + (i.valor || 0), 0) };
     })
     .filter(g => g.items.length > 0);
+  const orfaos = doMes.filter(i => !known.has(i.grupo)).sort((a, b) => (a.descricao || "").localeCompare(b.descricao || ""));
+  if (orfaos.length) {
+    grupos.push({ value: "_outros", label: "Outros", items: orfaos, total: orfaos.reduce((s, i) => s + (i.valor || 0), 0) });
+  }
+  return grupos;
+}
+function gcGroupTemplates(templates, categories) {
+  return (categories || [])
+    .slice()
+    .sort((a, b) => (a.ordem || 0) - (b.ordem || 0))
+    .map(g => {
+      const items = templates.filter(t => t.grupo === g.id).sort((a, b) => (a.nome || "").localeCompare(b.nome || ""));
+      return { value: g.id, label: g.nome, items };
+    })
+    .filter(g => g.items.length > 0);
 }
 // Uma instância nova gerada a partir de um template (ainda sem id salvo).
 function gcNovaInstanciaDeTemplate(t, competencia) {
+  const variavel = gcValorTipo(t) === "variavel";
   return {
     id: uid(), templateId: t.id, grupo: t.grupo, descricao: t.nome, competencia,
     valor: t.valorPadrao || 0, pago: false,
+    valorConfirmado: !variavel,
     compartilhado: !!t.compartilhado, compartilhadoCom: t.compartilhadoCom || "",
     minhaParcelaPct: t.minhaParcelaPct != null ? t.minhaParcelaPct : 100,
   };
@@ -433,28 +458,28 @@ const GC_DEMO_DATA = {
   // pesam no meu custo de vida), mensal com data de fim (Cerâmica parou em
   // julho) e anual (assinaturas cobradas 1x/ano num mês fixo).
   expenseTemplates: [
-    { id: "demo-tpl-caesb", nome: "CAESB", grupo: "casa", frequencia: "mensal", valorPadrao: 120, compartilhado: true, compartilhadoCom: "Bruno", minhaParcelaPct: 0, ativo: true, dataInicio: "2026-01", dataFim: null },
-    { id: "demo-tpl-neoenergia", nome: "NEOENERGIA", grupo: "casa", frequencia: "mensal", valorPadrao: 210, compartilhado: true, compartilhadoCom: "Bruno", minhaParcelaPct: 0, ativo: true, dataInicio: "2026-01", dataFim: null },
-    { id: "demo-tpl-supergas", nome: "SuperGás", grupo: "casa", frequencia: "mensal", valorPadrao: 90, compartilhado: true, compartilhadoCom: "Bruno", minhaParcelaPct: 0, ativo: true, dataInicio: "2026-01", dataFim: null },
-    { id: "demo-tpl-internet", nome: "Internet", grupo: "casa", frequencia: "mensal", valorPadrao: 130, compartilhado: true, compartilhadoCom: "Bruno", minhaParcelaPct: 0, ativo: true, dataInicio: "2026-01", dataFim: null },
-    { id: "demo-tpl-cartao", nome: "Cartão de crédito", grupo: "pessoal", frequencia: "mensal", valorPadrao: 550, compartilhado: false, minhaParcelaPct: 100, ativo: true, dataInicio: "2026-01", dataFim: null },
-    { id: "demo-tpl-psicologa", nome: "Psicóloga", grupo: "pix", frequencia: "mensal", valorPadrao: 520, compartilhado: false, minhaParcelaPct: 100, ativo: true, dataInicio: "2026-01", dataFim: null },
-    { id: "demo-tpl-plano-saude", nome: "Plano de Saúde", grupo: "pix", frequencia: "mensal", valorPadrao: 620, compartilhado: false, minhaParcelaPct: 100, ativo: true, dataInicio: "2026-01", dataFim: null },
-    { id: "demo-tpl-mei", nome: "MEI", grupo: "pix", frequencia: "mensal", valorPadrao: 86.05, compartilhado: false, minhaParcelaPct: 100, ativo: true, dataInicio: "2026-01", dataFim: null },
-    { id: "demo-tpl-ceramica", nome: "Cerâmica", grupo: "pix", frequencia: "mensal", valorPadrao: 500, compartilhado: false, minhaParcelaPct: 100, ativo: true, dataInicio: "2026-01", dataFim: "2026-07" },
-    { id: "demo-tpl-apple-one", nome: "Apple One", grupo: "cartao_fixo", frequencia: "mensal", valorPadrao: 42.90, compartilhado: false, minhaParcelaPct: 100, ativo: true, dataInicio: "2026-01", dataFim: null },
-    { id: "demo-tpl-icloud", nome: "iCloud+", grupo: "cartao_fixo", frequencia: "mensal", valorPadrao: 5.90, compartilhado: false, minhaParcelaPct: 100, ativo: true, dataInicio: "2026-01", dataFim: null },
-    { id: "demo-tpl-youtube", nome: "Youtube Premium", grupo: "cartao_fixo", frequencia: "mensal", valorPadrao: 53.90, compartilhado: false, minhaParcelaPct: 100, ativo: true, dataInicio: "2026-01", dataFim: null },
-    { id: "demo-tpl-disney", nome: "Disney+", grupo: "cartao_fixo", frequencia: "mensal", valorPadrao: 66.90, compartilhado: false, minhaParcelaPct: 100, ativo: true, dataInicio: "2026-01", dataFim: null },
-    { id: "demo-tpl-psn", nome: "PSN", grupo: "cartao_fixo", frequencia: "anual", mesCobranca: 1, valorPadrao: 566.04, compartilhado: false, minhaParcelaPct: 100, ativo: true, dataInicio: "2026-01", dataFim: null },
-    { id: "demo-tpl-nintendo", nome: "Nintendo Online", grupo: "cartao_fixo", frequencia: "anual", mesCobranca: 1, valorPadrao: 299.00, compartilhado: false, minhaParcelaPct: 100, ativo: true, dataInicio: "2026-01", dataFim: null },
-    { id: "demo-tpl-googleone", nome: "Google One", grupo: "cartao_fixo", frequencia: "anual", mesCobranca: 7, valorPadrao: 45.00, compartilhado: false, minhaParcelaPct: 100, ativo: true, dataInicio: "2026-01", dataFim: null },
-    { id: "demo-tpl-ticktick", nome: "TickTick", grupo: "cartao_fixo", frequencia: "anual", mesCobranca: 10, valorPadrao: 137.90, compartilhado: false, minhaParcelaPct: 100, ativo: true, dataInicio: "2026-01", dataFim: null },
+    { id: "demo-tpl-caesb", nome: "CAESB", grupo: "casa", frequencia: "mensal", valorPadrao: 120, valorTipo: "variavel", compartilhado: true, compartilhadoCom: "Bruno", minhaParcelaPct: 0, ativo: true, dataInicio: "2026-01", dataFim: null },
+    { id: "demo-tpl-neoenergia", nome: "NEOENERGIA", grupo: "casa", frequencia: "mensal", valorPadrao: 210, valorTipo: "variavel", compartilhado: true, compartilhadoCom: "Bruno", minhaParcelaPct: 0, ativo: true, dataInicio: "2026-01", dataFim: null },
+    { id: "demo-tpl-supergas", nome: "SuperGás", grupo: "casa", frequencia: "mensal", valorPadrao: 90, valorTipo: "variavel", compartilhado: true, compartilhadoCom: "Bruno", minhaParcelaPct: 0, ativo: true, dataInicio: "2026-01", dataFim: null },
+    { id: "demo-tpl-internet", nome: "Internet", grupo: "casa", frequencia: "mensal", valorPadrao: 130, valorTipo: "variavel", compartilhado: true, compartilhadoCom: "Bruno", minhaParcelaPct: 0, ativo: true, dataInicio: "2026-01", dataFim: null },
+    { id: "demo-tpl-cartao", nome: "Cartão de crédito", grupo: "pessoal", frequencia: "mensal", valorPadrao: 550, valorTipo: "variavel", compartilhado: false, minhaParcelaPct: 100, ativo: true, dataInicio: "2026-01", dataFim: null },
+    { id: "demo-tpl-ceramica", nome: "Cerâmica", grupo: "pessoal", frequencia: "mensal", valorPadrao: 500, valorTipo: "variavel", compartilhado: false, minhaParcelaPct: 100, ativo: true, dataInicio: "2026-01", dataFim: "2026-07" },
+    { id: "demo-tpl-psicologa", nome: "Psicóloga", grupo: "saude", frequencia: "mensal", valorPadrao: 520, valorTipo: "fixo", compartilhado: false, minhaParcelaPct: 100, ativo: true, dataInicio: "2026-01", dataFim: null },
+    { id: "demo-tpl-plano-saude", nome: "Plano de Saúde", grupo: "saude", frequencia: "mensal", valorPadrao: 620, valorTipo: "fixo", compartilhado: false, minhaParcelaPct: 100, ativo: true, dataInicio: "2026-01", dataFim: null },
+    { id: "demo-tpl-mei", nome: "MEI", grupo: "trabalho", frequencia: "mensal", valorPadrao: 86.05, valorTipo: "fixo", compartilhado: false, minhaParcelaPct: 100, ativo: true, dataInicio: "2026-01", dataFim: null },
+    { id: "demo-tpl-apple-one", nome: "Apple One", grupo: "assinaturas", frequencia: "mensal", valorPadrao: 42.90, valorTipo: "fixo", compartilhado: false, minhaParcelaPct: 100, ativo: true, dataInicio: "2026-01", dataFim: null },
+    { id: "demo-tpl-icloud", nome: "iCloud+", grupo: "assinaturas", frequencia: "mensal", valorPadrao: 5.90, valorTipo: "fixo", compartilhado: false, minhaParcelaPct: 100, ativo: true, dataInicio: "2026-01", dataFim: null },
+    { id: "demo-tpl-youtube", nome: "Youtube Premium", grupo: "assinaturas", frequencia: "mensal", valorPadrao: 53.90, valorTipo: "fixo", compartilhado: false, minhaParcelaPct: 100, ativo: true, dataInicio: "2026-01", dataFim: null },
+    { id: "demo-tpl-disney", nome: "Disney+", grupo: "assinaturas", frequencia: "mensal", valorPadrao: 66.90, valorTipo: "fixo", compartilhado: false, minhaParcelaPct: 100, ativo: true, dataInicio: "2026-01", dataFim: null },
+    { id: "demo-tpl-psn", nome: "PSN", grupo: "assinaturas", frequencia: "anual", mesCobranca: 1, valorPadrao: 566.04, valorTipo: "fixo", compartilhado: false, minhaParcelaPct: 100, ativo: true, dataInicio: "2026-01", dataFim: null },
+    { id: "demo-tpl-nintendo", nome: "Nintendo Online", grupo: "assinaturas", frequencia: "anual", mesCobranca: 1, valorPadrao: 299.00, valorTipo: "fixo", compartilhado: false, minhaParcelaPct: 100, ativo: true, dataInicio: "2026-01", dataFim: null },
+    { id: "demo-tpl-googleone", nome: "Google One", grupo: "assinaturas", frequencia: "anual", mesCobranca: 7, valorPadrao: 45.00, valorTipo: "fixo", compartilhado: false, minhaParcelaPct: 100, ativo: true, dataInicio: "2026-01", dataFim: null },
+    { id: "demo-tpl-ticktick", nome: "TickTick", grupo: "assinaturas", frequencia: "anual", mesCobranca: 10, valorPadrao: 137.90, valorTipo: "fixo", compartilhado: false, minhaParcelaPct: 100, ativo: true, dataInicio: "2026-01", dataFim: null },
   ],
-  // Compras avulsas (sem template) — o catch-all pra gastos pontuais.
+  // Compras avulsas (sem template) — gastos pontuais na área Pessoal.
   expenseInstancesAvulsas: [
-    { id: "demo-inst-compra-1", templateId: null, grupo: "compras", descricao: "Compras", competencia: "2026-01", valor: 358.09, pago: true, compartilhado: false, compartilhadoCom: "", minhaParcelaPct: 100 },
-    { id: "demo-inst-compra-2", templateId: null, grupo: "compras", descricao: "Compras", competencia: "2026-02", valor: 183.27, pago: true, compartilhado: false, compartilhadoCom: "", minhaParcelaPct: 100 },
+    { id: "demo-inst-compra-1", templateId: null, grupo: "pessoal", descricao: "Compras", competencia: "2026-01", valor: 358.09, pago: true, valorConfirmado: true, compartilhado: false, compartilhadoCom: "", minhaParcelaPct: 100 },
+    { id: "demo-inst-compra-2", templateId: null, grupo: "pessoal", descricao: "Compras", competencia: "2026-02", valor: 183.27, pago: true, valorConfirmado: true, compartilhado: false, compartilhadoCom: "", minhaParcelaPct: 100 },
   ],
   // Saldo mensal (net worth) — mesmos números da linha INVESTIMENTOS da
   // planilha original. Ago/Set (e adiante) ficam sem snapshot de propósito:
@@ -950,18 +975,19 @@ function GcIncomeProjectionForm({ ano, initial, onSave, onClose }) {
 }
 
 /* ---------------------------------------------------------------
-   TELA: DESPESAS (Fase 2) — lista unificada (casa/pessoal/pix/cartão fixo/
-   compras) agrupada por categoria, com checkbox de "pago" inline. É aqui
-   que vive a ação de marcar uma conta como paga (sem precisar abrir modal).
+   TELA: DESPESAS (Fase 2) — lista unificada agrupada por área da vida
+   (Casa/Saúde/Assinaturas/Pessoal/Trabalho), com checkbox de "pago"
+   inline e badge "a confirmar" nas variáveis ainda estimadas.
 ----------------------------------------------------------------*/
 function GcDespesas({ instances, categories, competencia, onCompetenciaChange, onTogglePago, onEditInstance, onManageCategories }) {
   const grupos = gcGroupInstances(instances, competencia, categories);
   const totalMes = gcMonthInstancesTotal(instances, competencia);
   const custoMes = gcCustoMes(instances, competencia);
+  const aConfirmar = gcInstancesForCompetencia(instances, competencia).filter(i => !gcValorConfirmado(i)).length;
 
   return (
     <div className="gc-screen">
-      <div className="gc-statcards gc-statcards-2">
+      <div className="gc-statcards gc-statcards-3">
         <div className="gc-statcard">
           <span className="gc-statcard-num gc-money">{gcFmtMoney(totalMes)}</span>
           <span className="gc-statcard-cap">Total lançado</span>
@@ -969,6 +995,10 @@ function GcDespesas({ instances, categories, competencia, onCompetenciaChange, o
         <div className="gc-statcard">
           <span className="gc-statcard-num gc-money gc-num-red">{gcFmtMoney(custoMes)}</span>
           <span className="gc-statcard-cap">Meu custo (após divisão)</span>
+        </div>
+        <div className="gc-statcard">
+          <span className={"gc-statcard-num" + (aConfirmar > 0 ? " gc-num-gold" : "")}>{aConfirmar}</span>
+          <span className="gc-statcard-cap">A confirmar</span>
         </div>
       </div>
 
@@ -991,25 +1021,34 @@ function GcDespesas({ instances, categories, competencia, onCompetenciaChange, o
               <span className="gc-money">{gcFmtMoney(g.total)}</span>
             </div>
             <div className="gc-list">
-              {g.items.map(inst => (
-                <div className="gc-list-row" key={inst.id}>
-                  <button type="button" className={"gc-checkbox" + (inst.pago ? " checked" : "")}
-                    onClick={() => onTogglePago(inst.id)}
-                    aria-label={inst.pago ? `Marcar ${inst.descricao} como não paga` : `Marcar ${inst.descricao} como paga`}>
-                    {inst.pago && <Check size={14} />}
-                  </button>
-                  <button type="button" className="gc-list-row-main" onClick={() => onEditInstance(inst)}>
-                    <span className="gc-list-row-title">{inst.descricao}</span>
-                    {inst.templateId && (
-                      <span className="gc-pill gc-pill-muted gc-pill-icon" title="Recorrente" aria-label="Recorrente"><Repeat size={11} /></span>
-                    )}
-                    {inst.compartilhado && (
-                      <span className="gc-pill gc-pill-gold">{inst.compartilhadoCom || "Dividido"}</span>
-                    )}
-                  </button>
-                  <span className="gc-row-valor-display gc-money">{gcFmtMoney(inst.valor)}</span>
-                </div>
-              ))}
+              {g.items.map(inst => {
+                const pendente = !gcValorConfirmado(inst);
+                return (
+                  <div className="gc-list-row" key={inst.id}>
+                    <button type="button" className={"gc-checkbox" + (inst.pago ? " checked" : "")}
+                      onClick={() => onTogglePago(inst.id)}
+                      aria-label={inst.pago ? `Marcar ${inst.descricao} como não paga` : `Marcar ${inst.descricao} como paga`}>
+                      {inst.pago && <Check size={14} />}
+                    </button>
+                    <button type="button" className="gc-list-row-main" onClick={() => onEditInstance(inst)}>
+                      <span className="gc-list-row-grow">
+                        <span className="gc-list-row-title-line">
+                          <span className="gc-list-row-title">{inst.descricao}</span>
+                          {inst.templateId && (
+                            <span className="gc-pill gc-pill-muted gc-pill-icon" title="Recorrente" aria-label="Recorrente"><Repeat size={11} /></span>
+                          )}
+                          {pendente && <span className="gc-pill gc-pill-gold">a confirmar</span>}
+                          {inst.compartilhado && (
+                            <span className="gc-pill gc-pill-gold">{inst.compartilhadoCom || "Dividido"}</span>
+                          )}
+                        </span>
+                        {pendente && <small className="gc-list-row-sub">estimado</small>}
+                      </span>
+                    </button>
+                    <span className="gc-row-valor-display gc-money">{gcFmtMoney(inst.valor)}</span>
+                  </div>
+                );
+              })}
             </div>
           </div>
         ))
@@ -1020,7 +1059,7 @@ function GcDespesas({ instances, categories, competencia, onCompetenciaChange, o
 
 function GcExpenseInstanceForm({ initial, categories, competencia, onSave, onDelete, onClose }) {
   const [descricao, setDescricao] = useState(initial ? initial.descricao : "Compras");
-  const [grupo, setGrupo] = useState(initial ? initial.grupo : (categories.find(g => g.id === "compras") || categories[0] || {}).id || "compras");
+  const [grupo, setGrupo] = useState(initial ? initial.grupo : ((categories.find(g => g.id === "pessoal") || categories[0] || {}).id || "pessoal"));
   const [valor, setValor] = useState(initial ? String(initial.valor) : "");
   const [pago, setPago] = useState(initial ? initial.pago : false);
   const [compartilhado, setCompartilhado] = useState(initial ? initial.compartilhado : false);
@@ -1039,6 +1078,7 @@ function GcExpenseInstanceForm({ initial, categories, competencia, onSave, onDel
       valor: parseFloat(String(valor).replace(",", ".")) || 0,
       pago, compartilhado, compartilhadoCom: compartilhado ? compartilhadoCom : "",
       minhaParcelaPct: compartilhado ? (parseFloat(minhaParcelaPct) || 0) : 100,
+      valorConfirmado: true,
     });
     setBusy(false);
     if (ok !== false) onClose();
@@ -1103,39 +1143,72 @@ function GcExpenseInstanceForm({ initial, categories, competencia, onSave, onDel
    de Despesas automaticamente (ver gcGenerateMissingInstances).
 ----------------------------------------------------------------*/
 function GcRecorrencias({ templates, categories, onEdit }) {
-  const ordenados = templates.slice().sort((a, b) => a.grupo.localeCompare(b.grupo) || a.nome.localeCompare(b.nome));
+  const grupos = gcGroupTemplates(templates, categories);
+  const orfaos = templates.filter(t => !(categories || []).some(c => c.id === t.grupo));
   return (
     <div className="gc-screen">
-      {ordenados.length === 0 ? (
+      {templates.length === 0 ? (
         <EmptyState icon={<Repeat size={40} />} title="Nenhuma recorrência" message="Toque no + pra cadastrar uma conta fixa, assinatura ou cobrança anual." />
       ) : (
-        <div className="gc-list">
-          {ordenados.map(t => (
-            <button type="button" className="gc-list-row gc-list-row-btn" key={t.id} onClick={() => onEdit(t)}>
-              <span className={"gc-pill" + (t.compartilhado ? " gc-pill-gold" : "")}>{gcExpenseGroupLabel(t.grupo, categories)}</span>
-              <span className="gc-list-row-title gc-list-row-grow">
-                {t.nome}
-                <small className="gc-list-row-sub">
-                  {t.frequencia === "anual" ? `Anual · ${MONTH_LABELS[(t.mesCobranca || 1) - 1]}` : "Mensal"}
-                  {t.dataFim ? " · pausada" : t.ativo === false ? " · inativa" : ""}
-                  {t.compartilhado ? ` · ${t.minhaParcelaPct}% minha parte` : ""}
-                </small>
-              </span>
-              <span className="gc-money">{gcFmtMoney(t.valorPadrao)}</span>
-            </button>
+        <>
+          {grupos.map(g => (
+            <div className="gc-group" key={g.value}>
+              <div className="gc-group-header"><span>{g.label}</span></div>
+              <div className="gc-list">
+                {g.items.map(t => {
+                  const tipo = gcValorTipo(t);
+                  return (
+                    <button type="button" className="gc-list-row gc-list-row-btn" key={t.id} onClick={() => onEdit(t)}>
+                      <span className="gc-list-row-title gc-list-row-grow">
+                        <span className="gc-list-row-title-line">
+                          <span>{t.nome}</span>
+                          <span className={"gc-pill" + (tipo === "variavel" ? " gc-pill-muted" : " gc-pill-gold")}>{tipo === "variavel" ? "Variável" : "Fixo"}</span>
+                          {t.compartilhado && <span className="gc-pill gc-pill-gold">dividido</span>}
+                        </span>
+                        <small className="gc-list-row-sub">
+                          {t.frequencia === "anual" ? `Anual · ${MONTH_LABELS[(t.mesCobranca || 1) - 1]}` : "Mensal"}
+                          {t.dataFim ? " · pausada" : t.ativo === false ? " · inativa" : ""}
+                          {t.compartilhado ? ` · ${t.minhaParcelaPct}% minha parte` : ""}
+                        </small>
+                      </span>
+                      <span className="gc-money">{gcFmtMoney(t.valorPadrao)}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
           ))}
-        </div>
+          {orfaos.length > 0 && (
+            <div className="gc-group">
+              <div className="gc-group-header"><span>Outros</span></div>
+              <div className="gc-list">
+                {orfaos.map(t => (
+                  <button type="button" className="gc-list-row gc-list-row-btn" key={t.id} onClick={() => onEdit(t)}>
+                    <span className="gc-list-row-title gc-list-row-grow">
+                      <span className="gc-list-row-title-line">
+                        <span>{t.nome}</span>
+                        <span className="gc-pill gc-pill-muted">{gcExpenseGroupLabel(t.grupo, categories)}</span>
+                      </span>
+                    </span>
+                    <span className="gc-money">{gcFmtMoney(t.valorPadrao)}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
       )}
     </div>
   );
 }
 
 function GcExpenseTemplateForm({ initial, categories, onSave, onDelete, onClose }) {
+  const gruposDisponiveis = categories || [];
   const [nome, setNome] = useState(initial ? initial.nome : "");
-  const gruposDisponiveis = categories.filter(g => g.id !== "compras");
-  const [grupo, setGrupo] = useState(initial ? initial.grupo : ((gruposDisponiveis.find(g => g.id === "pix") || gruposDisponiveis[0] || {}).id || "pix"));
+  const [grupo, setGrupo] = useState(initial ? initial.grupo : ((gruposDisponiveis.find(g => g.id === "pessoal") || gruposDisponiveis[0] || {}).id || "pessoal"));
   const [frequencia, setFrequencia] = useState(initial ? initial.frequencia : "mensal");
   const [mesCobranca, setMesCobranca] = useState(initial && initial.mesCobranca ? String(initial.mesCobranca) : "1");
+  const [valorTipo, setValorTipo] = useState(initial ? gcValorTipo(initial) : "fixo");
   const [valorPadrao, setValorPadrao] = useState(initial ? String(initial.valorPadrao) : "");
   const [dataInicio, setDataInicio] = useState(initial ? initial.dataInicio : competenciaAtual());
   const [dataFim, setDataFim] = useState(initial && initial.dataFim ? initial.dataFim : "");
@@ -1154,6 +1227,7 @@ function GcExpenseTemplateForm({ initial, categories, onSave, onDelete, onClose 
       nome: nome.trim(), grupo, frequencia,
       mesCobranca: frequencia === "anual" ? parseInt(mesCobranca, 10) : null,
       diaVencimento: initial ? initial.diaVencimento : null,
+      valorTipo,
       valorPadrao: parseFloat(String(valorPadrao).replace(",", ".")) || 0,
       compartilhado, compartilhadoCom: compartilhado ? compartilhadoCom : "",
       minhaParcelaPct: compartilhado ? (parseFloat(minhaParcelaPct) || 0) : 100,
@@ -1175,7 +1249,10 @@ function GcExpenseTemplateForm({ initial, categories, onSave, onDelete, onClose 
             {gruposDisponiveis.map(g => <option key={g.id} value={g.id}>{g.nome}</option>)}
           </select>
         </Field>
-        <Field label="Valor padrão">
+        <Field label="Tipo de valor">
+          <Segmented options={[{ value: "fixo", label: "Fixo" }, { value: "variavel", label: "Variável" }]} value={valorTipo} onChange={setValorTipo} />
+        </Field>
+        <Field label={valorTipo === "variavel" ? "Valor estimado" : "Valor padrão"} wide>
           <input type="number" inputMode="decimal" step="0.01" value={valorPadrao} onChange={e => setValorPadrao(e.target.value)} required />
         </Field>
         <Field label="Frequência" wide>
@@ -1544,11 +1621,22 @@ function GcAreaChart({ items }) {
   const pontos = items.map((it, i) => [pad + i * stepX, pad + (h - pad * 2) * (1 - it.value / max)]);
   const linha = pontos.map((p, i) => (i === 0 ? "M" : "L") + p[0].toFixed(1) + " " + p[1].toFixed(1)).join(" ");
   const area = `${linha} L ${pontos[pontos.length - 1][0].toFixed(1)} ${h - pad} L ${pontos[0][0].toFixed(1)} ${h - pad} Z`;
+  const padPct = (pad / w) * 100;
   return (
-    <svg viewBox={`0 0 ${w} ${h}`} className="gc-area-chart" preserveAspectRatio="none">
-      <path d={area} className="gc-area-fill" />
-      <path d={linha} className="gc-area-line" fill="none" />
-    </svg>
+    <div className="gc-area-wrap">
+      <svg viewBox={`0 0 ${w} ${h}`} className="gc-area-chart" preserveAspectRatio="none">
+        <path d={area} className="gc-area-fill" />
+        <path d={linha} className="gc-area-line" fill="none" />
+        {pontos.map((p, i) => (
+          <circle key={items[i].label} cx={p[0]} cy={p[1]} r="2.2" className="gc-area-dot" />
+        ))}
+      </svg>
+      <div className="gc-area-labels" style={{ paddingLeft: padPct + "%", paddingRight: padPct + "%" }}>
+        {items.map(it => (
+          <span key={it.label} className="gc-area-label">{it.label}</span>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -2139,12 +2227,15 @@ div.gc-statcard { cursor: default; }
 .gc-list-row:last-of-type { border-bottom: none; }
 .gc-list-row-main { display: flex; align-items: center; gap: var(--sp-3); flex: 1; min-width: 0; background: none; border: none; padding: 0; cursor: pointer; text-align: left; font: inherit; color: inherit; }
 .gc-list-row-title { font-family: 'Space Grotesk', sans-serif; font-weight: 600; font-size: 14.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gc-list-row-title-line { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; }
+.gc-list-row-title-line .gc-list-row-title { flex: 0 1 auto; }
 .gc-row-valor { width: 110px; flex-shrink: 0; text-align: right; padding: 8px 10px; border-radius: var(--radius-pill); border: 1px solid var(--gc-line); font-size: 15px; font-weight: 600; color: var(--gc-ink); }
 .gc-row-valor:focus { outline: 1.5px solid var(--gc-accent); outline-offset: 1px; }
 .gc-list-total { display: flex; align-items: center; justify-content: space-between; padding: var(--sp-3) var(--sp-4); background: var(--gc-surface-2); font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 14.5px; }
 
 .gc-statcards-2 { grid-template-columns: repeat(2, 1fr); }
 .gc-num-red { color: var(--gc-red); }
+.gc-num-gold { color: var(--gc-gold); }
 
 .gc-group { display: flex; flex-direction: column; gap: var(--sp-2); }
 .gc-group-header { display: flex; align-items: center; justify-content: space-between; padding: 0 var(--sp-1); font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 12px; text-transform: uppercase; letter-spacing: .4px; color: var(--gc-ink-soft); }
@@ -2191,9 +2282,13 @@ button.gc-list-row-btn:hover { background: var(--gc-surface-2); }
 .gc-legend-a { background: var(--gc-accent); }
 .gc-legend-b { background: var(--gc-red); }
 
+.gc-area-wrap { display: flex; flex-direction: column; gap: 6px; }
 .gc-area-chart { width: 100%; height: 120px; display: block; }
 .gc-area-fill { fill: color-mix(in srgb, var(--gc-accent) 22%, transparent); }
 .gc-area-line { stroke: var(--gc-accent); stroke-width: 2.5; }
+.gc-area-dot { fill: var(--gc-accent); }
+.gc-area-labels { display: flex; justify-content: space-between; }
+.gc-area-label { font-family: 'Space Grotesk', sans-serif; font-size: 10px; color: var(--gc-ink-soft); text-align: center; line-height: 1; }
 
 .gc-cashflow-wrap { overflow-x: auto; border: 1px solid var(--gc-line); border-radius: var(--radius-md); }
 .gc-cashflow-table { border-collapse: collapse; width: 100%; font-family: 'Space Grotesk', sans-serif; font-size: 11.5px; white-space: nowrap; }
