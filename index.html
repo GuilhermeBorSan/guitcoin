@@ -1,0 +1,649 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#ffffff" />
+<link rel="icon" type="image/svg+xml" href="assets/icon.svg" />
+<link rel="apple-touch-icon" href="assets/icon.svg" />
+<link rel="manifest" href="manifest.webmanifest" />
+<title>Guitcoin</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700;800&family=EB+Garamond:ital@0;1&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+<!-- Sem etapa de build: React + Babel via CDN, JSX transpilado no navegador (mesmo
+     padrão do Guitchelin/Letterborgs). @babel/standalone fixado em @7 de propósito. -->
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
+<!-- Cliente Supabase: auth (login por e-mail) + dados financeiros. -->
+<script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+</head>
+<body>
+<div id="root"></div>
+<script>
+(function () {
+  if (location.hostname !== "localhost" && location.hostname !== "127.0.0.1") return;
+  document.documentElement.classList.add("gc-iphone-preview");
+  var root = document.getElementById("root");
+  var stage = document.createElement("div");
+  stage.className = "gc-phone-stage";
+  var phone = document.createElement("div");
+  phone.className = "gc-phone";
+  root.parentNode.insertBefore(stage, root);
+  phone.appendChild(root);
+  stage.appendChild(phone);
+  var fit = function () {
+    var s = Math.min(1, (window.innerHeight - 36) / 852, (window.innerWidth - 36) / 393);
+    phone.style.transform = "translateZ(0) scale(" + s + ")";
+    stage.style.width = (393 * s) + "px";
+    stage.style.height = (852 * s) + "px";
+  };
+  fit();
+  window.addEventListener("resize", fit);
+})();
+</script>
+
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useMemo, useRef } = React;
+
+/* ---------------------------------------------------------------
+   Guitcoin: app autônomo de controle financeiro pessoal. Estruturado
+   seguindo o mesmo padrão de Guitchelin/Letterborgs (arquivo único, sem
+   build, Supabase). Persistência isolada no hook useGcData abaixo (as telas
+   não sabem de onde vêm os dados). Exige login. Fase 0: só shell + auth,
+   ainda sem tabelas/telas de verdade (ver CLAUDE.md > Roadmap).
+----------------------------------------------------------------*/
+
+// ---- Ícones (SVG inline, mesmo IconBase da família Gg/Lb) ----
+function IconBase({ size = 24, strokeWidth = 2, fill = "none", className, style, children }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill={fill} stroke="currentColor"
+      strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round"
+      className={className} style={style}>{children}</svg>
+  );
+}
+const X = (p) => <IconBase {...p}><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></IconBase>;
+const Check = (p) => <IconBase {...p}><polyline points="20 6 9 17 4 12"/></IconBase>;
+const Plus = (p) => <IconBase {...p}><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></IconBase>;
+const Pencil = (p) => <IconBase {...p}><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></IconBase>;
+const Trash2 = (p) => <IconBase {...p}><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></IconBase>;
+const LogOut = (p) => <IconBase {...p}><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></IconBase>;
+const ChevronDown = (p) => <IconBase {...p}><polyline points="6 9 12 15 18 9"/></IconBase>;
+const ChevronLeft = (p) => <IconBase {...p}><polyline points="15 18 9 12 15 6"/></IconBase>;
+const ChevronRight = (p) => <IconBase {...p}><polyline points="9 18 15 12 9 6"/></IconBase>;
+const Calendar = (p) => <IconBase {...p}><rect x="3" y="4" width="18" height="18" rx="2.5"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></IconBase>;
+const BarChart3 = (p) => <IconBase {...p}><rect x="4" y="12" width="4" height="8" rx="1.5" fill="currentColor" stroke="none"/><rect x="10" y="5" width="4" height="15" rx="1.5" fill="currentColor" stroke="none"/><rect x="16" y="9" width="4" height="11" rx="1.5" fill="currentColor" stroke="none"/></IconBase>;
+const TrendingUp = (p) => <IconBase {...p}><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></IconBase>;
+const FileText = (p) => <IconBase {...p}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></IconBase>;
+const Repeat = (p) => <IconBase {...p}><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></IconBase>;
+const Gift = (p) => <IconBase {...p}><polyline points="20 12 20 22 4 22 4 12"/><rect x="2" y="7" width="20" height="5"/><line x1="12" y1="22" x2="12" y2="7"/><path d="M12 7H7.5a2.5 2.5 0 0 1 0-5C11 2 12 7 12 7z"/><path d="M12 7h4.5a2.5 2.5 0 0 0 0-5C13 2 12 7 12 7z"/></IconBase>;
+const Menu = (p) => <IconBase {...p}><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></IconBase>;
+
+// Marca (círculo + cifrão), mesmo papel do GgFlower no Guitchelin: usada no
+// topbar e como ícone do botão que abre/fecha a gaveta lateral (outline
+// fechado, preenchido aberto).
+function GcCoin({ outline = false, size = 22 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <circle cx="12" cy="12" r="10" fill={outline ? "none" : "var(--gc-accent)"} stroke={outline ? "currentColor" : "var(--gc-accent)"} strokeWidth="1.6" />
+      <path d="M14.6 8.5h-4.2a1.9 1.9 0 0 0 0 3.8h3.2a1.9 1.9 0 0 1 0 3.8h-4.5"
+        stroke={outline ? "currentColor" : "#fff"} strokeWidth="1.6" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+      <line x1="12" y1="6.1" x2="12" y2="17.9" stroke={outline ? "currentColor" : "#fff"} strokeWidth="1.6" strokeLinecap="round"/>
+    </svg>
+  );
+}
+
+// ---- Helpers ----
+let _uid = 0;
+function uid() { _uid += 1; return "gc-" + Date.now().toString(36) + "-" + _uid.toString(36); }
+function todayISO() {
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+const MONTH_LABELS = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
+// competência = "YYYY-MM" (mês de referência de um lançamento/instância).
+function competenciaAtual() { return todayISO().slice(0, 7); }
+function competenciaLabel(comp) {
+  const [y, m] = (comp || "").split("-").map(Number);
+  return m ? `${MONTH_LABELS[m - 1]} ${y}` : comp;
+}
+// Preview local: localhost entra direto no app com dados fictícios, sem
+// gravar no Supabase de produção. Em guitcoin.vercel.app isso fica off.
+const GC_IS_LOCAL = ["localhost", "127.0.0.1"].includes(location.hostname);
+
+// ---- Cliente Supabase (auth + dados). TODO: preencher com o projeto
+// próprio do Guitcoin depois de provisionado no painel (ver CLAUDE.md >
+// Roadmap) — hoje são placeholders, então fora do localhost o login não vai
+// funcionar até isso ser feito. ----
+const GC_SUPABASE_URL = "https://SEU-PROJETO.supabase.co";
+const GC_SUPABASE_ANON_KEY = "SUA-ANON-KEY-AQUI";
+// "lock" passthrough: o supabase-js usa navigator.locks pra coordenar o
+// refresh do token, mas em alguns navegadores iOS/PWA esse lock trava e o
+// getSession() nunca resolve (app preso em "Carregando..."). App de um
+// usuário só, sem múltiplas abas concorrentes: passar direto é seguro e
+// evita a trava (mesmo workaround do Guitchelin).
+const gcAuthLock = async (_name, _acquireTimeout, fn) => fn();
+const gcSupabase = window.supabase && !GC_IS_LOCAL
+  ? window.supabase.createClient(GC_SUPABASE_URL, GC_SUPABASE_ANON_KEY, {
+      auth: { persistSession: true, autoRefreshToken: true, lock: gcAuthLock },
+    })
+  : null;
+
+// Corre uma promessa contra um timeout. Auth do supabase-js pode travar sem
+// nunca rejeitar (deadlock do navigator.locks); isso garante que a tela não
+// fique presa pra sempre.
+function gcWithTimeout(promise, ms, label) {
+  let t;
+  const timeout = new Promise((_, reject) => { t = setTimeout(() => reject(new Error(label || "timeout")), ms); });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(t));
+}
+
+// Traduz o erro cru do Supabase/Postgres numa dica acionável em pt-BR.
+function gcWriteErrorMsg(error, verbo) {
+  const msg = String((error && error.message) || error || "");
+  if (/row-level security/i.test(msg)) {
+    return `Não consegui ${verbo}: parece que a sessão expirou. Saia e entre de novo.`;
+  }
+  if (/does not exist|could not find|schema cache/i.test(msg)) {
+    return `Não consegui ${verbo}: falta rodar o supabase/schema.sql mais recente no SQL Editor.`;
+  }
+  return `Não consegui ${verbo}. Tenta de novo em alguns segundos.`;
+}
+
+// ---- Sessão (login por e-mail/senha). App exige login; sem sessão não há
+// leitura/escrita nas tabelas (RLS por user_id = auth.uid()). ----
+function useGcSession() {
+  const [session, setSession] = useState(GC_IS_LOCAL ? { user: { id: "demo-local", email: "demo@local" } } : undefined);
+  useEffect(() => {
+    if (GC_IS_LOCAL) return;
+    if (!gcSupabase) { setSession(null); return; }
+    gcSupabase.auth.getSession()
+      .then(({ data }) => setSession(data.session ?? null))
+      .catch((e) => { console.error(e); setSession(prev => prev === undefined ? null : prev); });
+    const { data: sub } = gcSupabase.auth.onAuthStateChange((_event, s) => setSession(s ?? null));
+    // Watchdog: se o auth travar na inicialização, não deixa o app preso em
+    // "Carregando..." pra sempre. Cai pro login depois de alguns segundos.
+    const watchdog = setTimeout(() => setSession(prev => prev === undefined ? null : prev), 6000);
+    return () => { clearTimeout(watchdog); sub.subscription.unsubscribe(); };
+  }, []);
+  return session;
+}
+
+// ---- Dados (Supabase). Fase 0: ainda sem tabelas — elas entram junto com a
+// tela que as usa, nas próximas fases (ver CLAUDE.md > Modelo de dados /
+// Roadmap). Por ora só expõe loading/error, já no formato final do hook, pra
+// as próximas fases só acrescentarem arrays + verbos aqui dentro. ----
+function useGcData(session) {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  return { loading, error, dismissError: () => setError(null) };
+}
+
+/* ---------------------------------------------------------------
+   PRIMITIVAS DE UI (Modal, Field, Segmented, TabBar, EmptyState) — prefixo
+   lb-, copiadas do Letterborgs (fonte das versões completas, o Guitchelin
+   ficou com recortes parciais). Sem dependência de i18n aqui.
+----------------------------------------------------------------*/
+function Field({ label, children, select, wide, headline }) {
+  return (
+    <label className={"lb-field" + (select ? " select" : "") + (wide ? " wide" : "") + (headline ? " headline" : "")}>
+      <span className="lb-field-label">{label}</span>
+      {children}
+    </label>
+  );
+}
+
+function Segmented({ options, value, onChange, wrap, pairs, ariaLabel }) {
+  return (
+    <div className={"lb-segmented" + (wrap ? " wrap" : "") + (pairs ? " pairs" : "")} role="tablist" aria-label={ariaLabel}>
+      {options.map(opt => (
+        <button key={opt.value} type="button" role="tab" aria-selected={value === opt.value}
+          className={(value === opt.value ? "active" : "") + (opt.muted ? " muted" : "")}
+          onClick={() => onChange(opt.value)}>
+          {opt.icon}{opt.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function TabBar({ options, value, onChange, ariaLabel }) {
+  return (
+    <div className="lb-tabbar" role="tablist" aria-label={ariaLabel}>
+      {options.map(opt => (
+        <button key={opt.value} type="button" role="tab" aria-selected={value === opt.value}
+          className={value === opt.value ? "active" : ""} onClick={() => onChange(opt.value)}>
+          {opt.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function Modal({ title, onClose, onRequestClose, children, wide, flush }) {
+  const panelRef = useRef(null);
+  const requestClose = () => (onRequestClose ? onRequestClose() : onClose());
+  const requestCloseRef = useRef(requestClose);
+  requestCloseRef.current = requestClose;
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") requestCloseRef.current(); };
+    document.addEventListener("keydown", onKey);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const panel = panelRef.current;
+    const prevFocus = document.activeElement;
+    const focusables = panel ? Array.from(panel.querySelectorAll(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+    )).filter(el => !el.disabled && el.offsetParent !== null) : [];
+    if (focusables.length) focusables[0].focus();
+    const trap = (e) => {
+      if (e.key !== "Tab" || !focusables.length) return;
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    };
+    document.addEventListener("keydown", trap);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("keydown", trap);
+      document.body.style.overflow = prevOverflow;
+      if (prevFocus && typeof prevFocus.focus === "function") prevFocus.focus();
+    };
+  }, []);
+  return ReactDOM.createPortal(
+    <div className="lb-modal-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) requestClose(); }}>
+      <div ref={panelRef} className={"lb-modal" + (wide ? " wide" : "")} role="dialog" aria-modal="true" aria-labelledby="lb-modal-title">
+        <div className="lb-modal-header">
+          <h3 id="lb-modal-title">{title}</h3>
+          <button className="lb-icon-btn" onClick={requestClose} aria-label="Fechar"><X size={20} /></button>
+        </div>
+        <div className={"lb-modal-body" + (flush ? " flush" : "")}>{children}</div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+function EmptyState({ icon, title, message, action }) {
+  return (
+    <div className="lb-empty">
+      {icon}
+      <h4>{title}</h4>
+      <p>{message}</p>
+      {action}
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------
+   SHELL DO APP (topbar, gaveta lateral, nav inferior + FAB contextual).
+   Fase 0: telas ainda são placeholders (EmptyState) — cada uma vira de
+   verdade na fase correspondente (ver CLAUDE.md > Roadmap).
+----------------------------------------------------------------*/
+const GC_NAV_ITEMS = [
+  { value: "dashboard", label: "Dashboard", icon: (s) => <BarChart3 size={s} />, group: null },
+  { value: "receitas", label: "Receitas", icon: (s) => <TrendingUp size={s} />, group: "Financeiro" },
+  { value: "despesas", label: "Despesas", icon: (s) => <FileText size={s} />, group: null },
+  { value: "recorrencias", label: "Recorrências", icon: (s) => <Repeat size={s} />, group: "Financeiro" },
+  { value: "investimentos", label: "Investimentos", icon: (s) => <TrendingUp size={s} />, group: "Financeiro" },
+  { value: "sonhos", label: "Lista de Sonhos", icon: (s) => <Gift size={s} />, group: "Listas" },
+];
+// Texto do FAB contextual: cada aba terá sua própria ação real nas próximas
+// fases (ex.: em Despesas -> nova despesa avulsa / nova recorrência). Por
+// ora só explica o que está por vir.
+function gcFabHint(subTab) {
+  switch (subTab) {
+    case "despesas": return "Lançar uma despesa avulsa (Compras) ou criar uma recorrência chega na Fase 2.";
+    case "receitas": return "Lançar uma receita do mês chega na Fase 1.";
+    case "investimentos": return "Registrar o saldo do mês chega na Fase 3.";
+    case "sonhos": return "Adicionar um item à Lista de Sonhos chega na Fase 4.";
+    default: return "As ações rápidas chegam junto com cada tela, fase a fase.";
+  }
+}
+
+function App({ session }) {
+  const { loading, error, dismissError } = useGcData(session);
+  const [subTab, setSubTab] = useState("dashboard");
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [fabInfo, setFabInfo] = useState(false);
+
+  useEffect(() => {
+    if (!sidebarOpen) return;
+    const onKey = (e) => { if (e.key === "Escape") setSidebarOpen(false); };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [sidebarOpen]);
+
+  const openTab = (tab) => { setSidebarOpen(false); setSubTab(tab); };
+  const financeiro = GC_NAV_ITEMS.filter(i => i.group === "Financeiro");
+  const listas = GC_NAV_ITEMS.filter(i => i.group === "Listas");
+  const current = GC_NAV_ITEMS.find(i => i.value === subTab);
+
+  return (
+    <>
+      {sidebarOpen && <div className="gc-sidebar-backdrop" onClick={() => setSidebarOpen(false)} />}
+      <aside className={"gc-sidebar" + (sidebarOpen ? " open" : "")}>
+        <nav className="gc-sidebar-nav">
+          <span className="gc-sidebar-label">Financeiro</span>
+          {financeiro.map(item => (
+            <button key={item.value} type="button" className={"gc-sidebar-link" + (subTab === item.value ? " active" : "")} onClick={() => openTab(item.value)}>
+              {item.icon(18)} <span>{item.label}</span>
+            </button>
+          ))}
+          <span className="gc-sidebar-label">Listas</span>
+          {listas.map(item => (
+            <button key={item.value} type="button" className={"gc-sidebar-link" + (subTab === item.value ? " active" : "")} onClick={() => openTab(item.value)}>
+              {item.icon(18)} <span>{item.label}</span>
+            </button>
+          ))}
+        </nav>
+        <span className="gc-sidebar-spacer" />
+        <button type="button" className="gc-sidebar-link gc-sidebar-signout" onClick={() => { if (!GC_IS_LOCAL && gcSupabase) gcSupabase.auth.signOut(); }} aria-label="Sair">
+          <LogOut size={18} /> <span>Sair</span>
+        </button>
+      </aside>
+      <div className="gc-app">
+        <header className="gc-topbar">
+          <button type="button" className={"gc-sidebar-toggle" + (sidebarOpen ? " open" : "")}
+            onClick={() => setSidebarOpen(o => !o)}
+            aria-label={sidebarOpen ? "Fechar menu" : "Abrir menu"} aria-expanded={sidebarOpen}>
+            <GcCoin outline={!sidebarOpen} />
+          </button>
+          <span className="gc-brand"><strong>Guitcoin</strong></span>
+          <span className="gc-topbar-spacer" />
+        </header>
+
+        {GC_IS_LOCAL && (
+          <div className="gc-demo-banner">Modo local: dados de exemplo. Nada disso vai pro Supabase.</div>
+        )}
+        {error && (
+          <div className="gc-error-banner" role="alert">
+            <span>{error}</span>
+            <button type="button" className="gc-error-close" onClick={dismissError} aria-label="Fechar aviso"><X size={16} /></button>
+          </div>
+        )}
+
+        <main className="gc-main">
+          {loading ? (
+            <p className="lb-hint gc-empty">Carregando...</p>
+          ) : (
+            <EmptyState
+              icon={current ? current.icon(40) : <BarChart3 size={40} />}
+              title={current ? current.label : "Guitcoin"}
+              message={
+                subTab === "dashboard"
+                  ? "Big numbers, fluxo de caixa e gráficos chegam na Fase 5."
+                  : `Essa tela ainda está em construção (ver Roadmap no CLAUDE.md).`
+              }
+            />
+          )}
+        </main>
+
+        <nav className="gc-bottomnav">
+          <button type="button" className={"gc-navbtn" + (subTab === "dashboard" ? " active" : "")} onClick={() => setSubTab("dashboard")}>
+            <BarChart3 size={20} /><span>Dashboard</span>
+          </button>
+          <button type="button" className="gc-navfab" onClick={() => setFabInfo(true)} aria-label="Adicionar">
+            <Plus size={26} />
+          </button>
+          <button type="button" className={"gc-navbtn" + (subTab === "despesas" ? " active" : "")} onClick={() => setSubTab("despesas")}>
+            <FileText size={20} /><span>Despesas</span>
+          </button>
+        </nav>
+
+        {fabInfo && (
+          <Modal title="Em construção" onClose={() => setFabInfo(false)}>
+            <p className="lb-hint">{gcFabHint(subTab)}</p>
+          </Modal>
+        )}
+      </div>
+    </>
+  );
+}
+
+// ---- Login (e-mail/senha). App é de uso pessoal: sem cadastro pela tela,
+// a conta já existe no Supabase. ----
+function GcLogin() {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const onSubmit = async (e) => {
+    e.preventDefault();
+    if (!gcSupabase) { setError("Supabase não está configurado ainda (ver CLAUDE.md > Roadmap)."); return; }
+    setBusy(true); setError("");
+    try {
+      const { error } = await gcWithTimeout(
+        gcSupabase.auth.signInWithPassword({ email, password }), 15000, "timeout");
+      if (error) setError("E-mail ou senha inválidos.");
+    } catch (err) {
+      console.error(err);
+      setError("A conexão com o login travou. Feche o app por completo (não só minimizar) e abra de novo.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="gc-login-screen">
+      <form className="gc-login-card" onSubmit={onSubmit}>
+        <span className="gc-brand"><GcCoin size={26} /> <strong>Guitcoin</strong></span>
+        <Field label="E-mail">
+          <input type="email" required autoFocus value={email} onChange={e => setEmail(e.target.value)} />
+        </Field>
+        <Field label="Senha">
+          <input type="password" required value={password} onChange={e => setPassword(e.target.value)} />
+        </Field>
+        {error && <p className="gc-login-error">{error}</p>}
+        <button type="submit" className="lb-btn primary" disabled={busy}>{busy ? "Entrando..." : "Entrar"}</button>
+      </form>
+    </div>
+  );
+}
+
+// ---- Raiz: decide entre carregando / login / app, conforme a sessão. ----
+function GcRoot() {
+  const session = useGcSession();
+  if (session === undefined) return <div className="gc-login-screen"><p className="lb-hint">Carregando...</p></div>;
+  if (!session) return <GcLogin />;
+  return <App session={session} />;
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<GcRoot />);
+</script>
+
+<style>
+:root {
+  --gc-accent: #1C7A4D; --gc-accent-deep: #145C3A;
+  --gc-red: #C23B3B; --gc-gold: #B08A2E;
+  --gc-bg: #FFFFFF; --gc-surface: #FFFFFF; --gc-surface-2: #F2F6F3;
+  --gc-line: #E1E8E3; --gc-ink: #13201A; --gc-ink-soft: #6E8079;
+  --radius-sm: 4px; --radius-md: 10px; --radius-lg: 18px; --radius-pill: 999px;
+  --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 20px; --sp-6: 24px; --sp-7: 32px; --sp-8: 40px;
+  --shadow: 0 24px 60px rgba(15,24,19,.24); --shadow-sm: 0 4px 14px rgba(15,24,19,.12);
+  --gc-sat: 0px; --gc-sab: 0px;
+  --gc-topbar-h: calc(63px + env(safe-area-inset-top, var(--gc-sat)));
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body { background: var(--gc-bg); color: var(--gc-ink); font-family: 'EB Garamond', serif; -webkit-font-smoothing: antialiased; }
+button { font: inherit; }
+.gc-mono, .gc-money { font-family: 'Space Grotesk', sans-serif; font-variant-numeric: tabular-nums; }
+
+/* Preview local: moldura iPhone 15 Pro (393×852, safe area 59/34). */
+html.gc-iphone-preview { --gc-sat: 59px; --gc-sab: 34px; }
+html.gc-iphone-preview, html.gc-iphone-preview body { background: #2a2620; min-height: 100%; overflow: hidden; }
+html.gc-iphone-preview body { display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+.gc-phone-stage { position: relative; flex-shrink: 0; }
+.gc-phone {
+  width: 393px; height: 852px; border-radius: 55px; overflow: hidden; background: #000;
+  box-shadow: 0 0 0 12px #1a1714, 0 0 0 14px #4a433c, 0 30px 70px rgba(0,0,0,.4);
+  transform-origin: top left;
+}
+.gc-phone::after {
+  content: ""; position: absolute; top: 11px; left: 50%; transform: translateX(-50%);
+  width: 126px; height: 37px; border-radius: 20px; background: #0b0a09; z-index: 200; pointer-events: none;
+}
+html.gc-iphone-preview #root { height: 100%; background: #fff; }
+html.gc-iphone-preview .gc-app, html.gc-iphone-preview .gc-login-screen { min-height: 100%; height: 100%; }
+html.gc-iphone-preview .gc-sidebar { max-height: calc(100% - var(--gc-topbar-h) - var(--gc-sab) - 12px); }
+
+/* ---- Primitivas (Modal/Field/Segmented/TabBar/botões), prefixo lb- ---- */
+.lb-btn {
+  display: inline-flex; align-items: center; gap: 6px; justify-content: center;
+  padding: 10px 20px; border-radius: var(--radius-pill); border: 1.5px solid var(--gc-ink);
+  background: #fff; color: var(--gc-ink);
+  font-family: 'Space Grotesk', sans-serif; font-weight: 600; font-size: 14.5px;
+  cursor: pointer; transition: opacity .15s, background .15s, color .15s; white-space: nowrap;
+}
+.lb-btn.primary { background: var(--gc-accent); color: #fff; border-color: var(--gc-accent); }
+.lb-btn.primary:disabled { opacity: .4; cursor: not-allowed; }
+.lb-btn.primary:not(:disabled):hover { background: var(--gc-accent-deep); }
+.lb-btn.ghost { background: #fff; border-color: var(--gc-line); color: var(--gc-ink); }
+.lb-btn.ghost:hover { background: var(--gc-surface-2); }
+.lb-btn.ghost.danger, .lb-btn.danger { color: var(--gc-red); }
+.lb-btn.danger { border-color: transparent; background: none; }
+.lb-btn:disabled { opacity: .4; cursor: not-allowed; }
+.gc-btn-sm { padding: 6px 12px; font-size: 13px; }
+.lb-btn.icon-only { padding: 10px; gap: 0; }
+.lb-icon-btn { background: none; border: none; cursor: pointer; color: var(--gc-ink-soft); display: flex; padding: 4px; }
+.lb-icon-btn:hover { color: var(--gc-ink); }
+
+.lb-modal-overlay {
+  position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; z-index: 50;
+  background: rgba(15,24,19,.42); -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px);
+  padding: calc(20px + env(safe-area-inset-top, var(--gc-sat))) 16px calc(20px + env(safe-area-inset-bottom, var(--gc-sab)));
+}
+.lb-modal {
+  background: #fff; border: 1px solid var(--gc-line); border-radius: var(--radius-lg);
+  width: 100%; max-width: 460px; max-height: calc(94vh - env(safe-area-inset-top, var(--gc-sat)) - env(safe-area-inset-bottom, var(--gc-sab)));
+  display: flex; flex-direction: column; overflow: hidden; box-shadow: var(--shadow);
+}
+.lb-modal.wide { max-width: 640px; }
+.lb-modal-header { display: flex; align-items: center; gap: 10px; padding: var(--sp-5); border-bottom: 1px solid var(--gc-line); }
+.lb-modal-header h3 { font-family: 'Playfair Display', serif; font-weight: 700; font-size: 20px; margin: 0; color: var(--gc-ink); flex: 1; min-width: 0; }
+.lb-modal-header .lb-icon-btn { flex-shrink: 0; }
+.lb-modal-body { padding: var(--sp-5); overflow-y: auto; overflow-x: hidden; }
+.lb-modal-body.flush { padding-bottom: 0; }
+
+.lb-form-grid { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: var(--sp-3); align-items: end; }
+.lb-field { position: relative; display: flex; flex-direction: column; gap: 5px; font-size: 14.5px; min-width: 0; }
+.lb-field.wide { grid-column: 1 / -1; }
+.lb-field-label {
+  color: var(--gc-ink-soft); font-weight: 700; font-family: 'Space Grotesk', sans-serif; font-size: 12.5px;
+  text-transform: uppercase; letter-spacing: .5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.lb-field input, .lb-field select {
+  -webkit-appearance: none; appearance: none; padding: 11px 15px; border-radius: var(--radius-pill);
+  border: 1px solid var(--gc-line); font-size: 16px; font-family: 'Space Grotesk', sans-serif; font-weight: 600;
+  color: var(--gc-ink); background: #fff; min-width: 0; width: 100%; text-overflow: ellipsis;
+}
+.lb-field input::placeholder { color: var(--gc-ink-soft); opacity: .8; }
+.lb-field.headline input { font-family: 'Playfair Display', serif; font-size: 17px; font-weight: 700; }
+.lb-field select { padding-right: 32px; cursor: pointer; }
+.lb-field input:focus, .lb-field select:focus { outline: 1.5px solid var(--gc-accent); outline-offset: 1px; }
+
+.lb-form-footer { position: sticky; bottom: 0; z-index: 3; margin: 0 calc(-1 * var(--sp-5)); padding: var(--sp-4) var(--sp-5) calc(var(--sp-4) + env(safe-area-inset-bottom, var(--gc-sab))); background: #fff; border-top: 1px solid var(--gc-line); display: flex; flex-direction: column; gap: var(--sp-3); }
+.lb-form-actions { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); flex-wrap: wrap; }
+.lb-form-actions-left { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
+.lb-form-actions-right { display: flex; align-items: center; gap: var(--sp-2); margin-left: auto; flex-wrap: wrap; justify-content: flex-end; }
+.lb-form-missing { margin: 0; font-size: 13px; color: var(--gc-red); }
+
+.lb-segmented {
+  display: flex; justify-content: stretch; gap: 2px;
+  background: var(--gc-line); padding: 3px; border-radius: var(--radius-pill);
+  margin: 0 auto; width: 100%; max-width: 100%; overflow-x: auto;
+  scrollbar-width: none; -ms-overflow-style: none;
+}
+.lb-segmented::-webkit-scrollbar { display: none; }
+.lb-segmented button {
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  flex: 1; min-width: 0; flex-shrink: 0;
+  border: none; background: transparent; padding: 8px 14px; border-radius: var(--radius-pill);
+  font-family: 'Space Grotesk', sans-serif; font-weight: 600; font-size: 13px; color: var(--gc-ink-soft);
+  cursor: pointer; transition: background .15s, color .15s; white-space: nowrap;
+}
+.lb-segmented button:hover { color: var(--gc-ink); }
+.lb-segmented button.muted { opacity: .45; }
+.lb-segmented button.muted.active { opacity: 1; }
+.lb-segmented button.active { background: #fff; color: var(--gc-accent); font-weight: 700; box-shadow: var(--shadow-sm); }
+.lb-segmented.wrap { flex-wrap: wrap; border-radius: var(--radius-md); max-width: 100%; }
+.lb-segmented.wrap button { padding: 7px 14px; font-size: 13px; }
+.lb-segmented.pairs { display: grid; grid-template-columns: repeat(2, 1fr); border-radius: var(--radius-md); max-width: 100%; overflow: hidden; }
+.lb-segmented.pairs button { padding: 9px 10px; justify-content: center; min-width: 0; flex-shrink: 1; white-space: normal; text-align: center; line-height: 1.2; }
+
+.lb-tabbar { display: flex; gap: 0; width: 100%; border-bottom: 1.5px solid var(--gc-line); overflow-x: auto; scrollbar-width: none; }
+.lb-tabbar::-webkit-scrollbar { display: none; }
+.lb-tabbar button {
+  flex: 1; min-width: 0; min-height: 44px; padding: 10px 12px;
+  background: none; border: none; border-bottom: 2px solid transparent; margin-bottom: -1.5px;
+  font-family: 'Space Grotesk', sans-serif; font-weight: 600; font-size: 13px;
+  letter-spacing: .3px; color: var(--gc-ink-soft); cursor: pointer;
+  transition: color .15s, border-color .15s; white-space: nowrap;
+}
+.lb-tabbar button:hover { color: var(--gc-ink); }
+.lb-tabbar button.active { color: var(--gc-accent); border-bottom-color: var(--gc-accent); }
+
+.lb-empty { text-align: center; padding: 60px 20px; color: var(--gc-ink-soft); display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.lb-empty h4 { font-family: 'Playfair Display', serif; font-size: 17px; color: var(--gc-ink); margin: 6px 0 0; font-weight: 600; }
+.lb-empty p { margin: 0; font-size: 16px; max-width: 320px; font-style: italic; }
+.lb-hint { color: var(--gc-ink-soft); text-align: center; }
+.gc-empty { padding: 60px 20px; }
+
+/* ---- Shell (topbar, sidebar, bottomnav, login) ---- */
+.gc-app { min-height: 100vh; padding-top: var(--gc-topbar-h); padding-bottom: calc(78px + env(safe-area-inset-bottom, var(--gc-sab))); }
+.gc-topbar {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 20; height: var(--gc-topbar-h);
+  display: flex; align-items: center; gap: var(--sp-3);
+  padding: env(safe-area-inset-top, var(--gc-sat)) var(--sp-5) 0;
+  background: #fff; border-bottom: 1px solid var(--gc-line);
+}
+.gc-brand { display: flex; align-items: center; gap: 8px; font-family: 'Playfair Display', serif; font-size: 19px; color: var(--gc-ink); }
+.gc-brand strong { font-weight: 700; }
+.gc-topbar-spacer { flex: 1; }
+.gc-sidebar-toggle { flex-shrink: 0; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; background: none; border: none; color: var(--gc-accent); cursor: pointer; padding: 0; }
+.gc-sidebar-toggle:hover { color: var(--gc-accent-deep); }
+
+.gc-sidebar-backdrop { position: fixed; inset: var(--gc-topbar-h) 0 0 0; background: rgba(15,24,19,.35); z-index: 30; }
+.gc-sidebar {
+  position: fixed; top: var(--gc-topbar-h); left: 0; bottom: 0; z-index: 35; width: min(300px, 84vw);
+  background: #fff; border-right: 1px solid var(--gc-line); box-shadow: var(--shadow);
+  display: flex; flex-direction: column; overflow-y: auto;
+  transform: translateX(-100%); transition: transform .2s ease;
+}
+.gc-sidebar.open { transform: translateX(0); }
+.gc-sidebar-nav { display: flex; flex-direction: column; padding: var(--sp-2) 0; }
+.gc-sidebar-label { font-family: 'Space Grotesk', sans-serif; font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .5px; color: var(--gc-ink-soft); padding: var(--sp-4) var(--sp-5) var(--sp-1); }
+.gc-sidebar-nav .gc-sidebar-label:first-child { padding-top: var(--sp-2); }
+.gc-sidebar-spacer { flex: 1; }
+.gc-sidebar-link { display: flex; align-items: center; gap: 12px; width: 100%; padding: 11px var(--sp-5); border: none; background: none; color: var(--gc-ink); font-family: 'Space Grotesk', sans-serif; font-weight: 600; font-size: 14px; text-align: left; cursor: pointer; transition: background .12s ease, color .12s ease; }
+.gc-sidebar-link svg { flex-shrink: 0; color: var(--gc-ink-soft); transition: color .12s ease; }
+.gc-sidebar-link:hover { background: var(--gc-surface-2); color: var(--gc-accent); }
+.gc-sidebar-link:hover svg { color: var(--gc-accent); }
+.gc-sidebar-link.active { color: var(--gc-accent); background: var(--gc-surface-2); }
+.gc-sidebar-link.active svg { color: var(--gc-accent); }
+.gc-sidebar-signout { margin-top: var(--sp-2); padding-top: var(--sp-3); padding-bottom: var(--sp-3); border-top: 1px solid var(--gc-line); color: var(--gc-ink-soft); }
+
+.gc-demo-banner { background: var(--gc-surface-2); color: var(--gc-ink-soft); font-family: 'Space Grotesk', sans-serif; font-size: 12.5px; text-align: center; padding: 6px var(--sp-4); }
+.gc-error-banner { display: flex; align-items: center; gap: var(--sp-2); background: #FBECEC; color: var(--gc-red); font-family: 'Space Grotesk', sans-serif; font-size: 13px; padding: 8px var(--sp-4); }
+.gc-error-close { margin-left: auto; background: none; border: none; color: inherit; cursor: pointer; display: flex; padding: 2px; }
+
+.gc-main { padding: var(--sp-5); max-width: 720px; margin: 0 auto; }
+
+.gc-bottomnav { position: fixed; bottom: 0; left: 0; right: 0; z-index: 15; display: flex; align-items: center; justify-content: space-around; padding: 8px 8px calc(8px + env(safe-area-inset-bottom, var(--gc-sab))); background: #fff; border-top: 1px solid var(--gc-line); }
+.gc-navbtn { display: flex; flex-direction: column; align-items: center; gap: 2px; background: none; border: none; color: var(--gc-ink-soft); font-family: 'Space Grotesk', sans-serif; font-weight: 600; font-size: 11px; padding: 6px 18px; cursor: pointer; }
+.gc-navbtn.active { color: var(--gc-accent); }
+.gc-navfab { width: 52px; height: 52px; border-radius: 50%; background: var(--gc-accent); color: #fff; border: none; display: flex; align-items: center; justify-content: center; box-shadow: var(--shadow-sm); cursor: pointer; margin-top: -22px; }
+.gc-navfab:hover { background: var(--gc-accent-deep); }
+
+.gc-login-screen { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: var(--sp-5); background: var(--gc-surface-2); }
+.gc-login-card { width: 100%; max-width: 340px; background: #fff; border: 1px solid var(--gc-line); border-radius: var(--radius-lg); box-shadow: var(--shadow-sm); padding: var(--sp-7) var(--sp-6); display: flex; flex-direction: column; gap: var(--sp-4); }
+.gc-login-card .gc-brand { justify-content: center; font-size: 22px; margin-bottom: var(--sp-2); }
+.gc-login-error { margin: 0; color: var(--gc-red); font-size: 13.5px; }
+</style>
+</body>
+</html>

@@ -1,0 +1,23 @@
+-- Guitcoin: schema das tabelas de dados (financeiro pessoal).
+-- Rodar uma vez no SQL Editor do painel Supabase (projeto próprio do
+-- Guitcoin, separado do Guitchelin/Letterborgs).
+--
+-- Convenção (mesma do Guitchelin): toda tabela tem `id text primary key`
+-- (gerado no cliente via uid()), `user_id uuid` dono da linha (RLS por
+-- `user_id = auth.uid()`, default na coluna) e `inserted_at` pra ordenação.
+-- Cada tabela ganha 4 políticas de RLS (select/insert/update/delete), todas
+-- `using/with check (user_id = auth.uid())`.
+--
+-- Fase 0 (bootstrap do shell/auth): ainda sem tabelas. Elas entram junto com
+-- a tela que as usa, nas próximas fases:
+--   Fase 1 — income_sources, income_entries, income_projections (Receitas)
+--   Fase 2 — expense_templates, expense_instances (Despesas + Recorrências)
+--   Fase 3 — investment_snapshots (Investimentos)
+--   Fase 4 — wishlist_items (Lista de Sonhos)
+
+-- Convenção de migração: toda vez que um campo novo for adicionado a um
+-- objeto no index.html, adiciona a coluna aqui via `create table if not
+-- exists` (instalações novas) E deixa uma linha `alter table ... add column
+-- if not exists ...;` comentada logo abaixo, pra rodar uma vez no SQL Editor
+-- em instalações existentes. Última coluna adicionada: nenhuma ainda
+-- (schema inicial).

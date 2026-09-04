@@ -1,0 +1,12 @@
+{
+  "name": "Guitcoin",
+  "short_name": "Guitcoin",
+  "description": "Controle financeiro pessoal do Gui.",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#1C7A4D",
+  "icons": [
+    { "src": "assets/icon.svg", "type": "image/svg+xml", "sizes": "any", "purpose": "any maskable" }
+  ]
+}
