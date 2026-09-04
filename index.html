@@ -445,6 +445,18 @@ const GC_FIREBASE_CONFIG = {
 const gcFirebaseApp = window.firebase && !GC_IS_LOCAL ? window.firebase.initializeApp(GC_FIREBASE_CONFIG) : null;
 const gcAuth = gcFirebaseApp ? window.firebase.auth() : null;
 const gcFirestore = gcFirebaseApp ? window.firebase.firestore() : null;
+// Persistência offline (IndexedDB): sem isso, uma escrita feita bem antes de
+// fechar a aba/app (ex.: marcar uma despesa como paga) fica só na fila em
+// memória do SDK — se a aba fechar antes do fetch pro Firestore terminar, a
+// escrita se perde e o app "esquece" o toggle ao reabrir. Com persistência
+// habilitada o SDK grava a fila em IndexedDB e reenvia sozinho quando a rede
+// (ou a aba) voltar. `synchronizeTabs` evita cada aba aberta brigar por dono
+// da persistência; `.catch` é mudo de propósito (falha comum em modo
+// anônimo/múltiplas abas antigas sem synchronizeTabs) — pior caso, cai de
+// volta pro comportamento anterior, sem quebrar o app.
+if (gcFirestore) {
+  gcFirestore.enablePersistence({ synchronizeTabs: true }).catch(() => {});
+}
 
 // Corre uma promessa contra um timeout, pra nenhuma tela ficar presa pra
 // sempre em "Carregando..." se a rede cair no meio de uma chamada.
@@ -1090,12 +1102,12 @@ function GcIncomeSourceForm({ initial, defaultCompetencia, onSave, onDelete, onC
           <div className="lb-form-actions">
             <div className="lb-form-actions-left">
               {initial && (
-                <button type="button" className="lb-btn danger" onClick={async () => {
+                <button type="button" className="lb-btn danger icon-only" aria-label="Excluir" onClick={async () => {
                   if (!confirm("Excluir esta fonte de receita e todos os lançamentos dela?")) return;
                   const ok = await onDelete(initial.id);
                   if (ok !== false) onClose();
                 }}>
-                  <Trash2 size={16} /> Excluir
+                  <Trash2 size={16} />
                 </button>
               )}
             </div>
@@ -1302,12 +1314,12 @@ function GcExpenseInstanceForm({ initial, categories, competencia, onSave, onDel
           <div className="lb-form-actions">
             <div className="lb-form-actions-left">
               {initial && (
-                <button type="button" className="lb-btn danger" onClick={async () => {
+                <button type="button" className="lb-btn danger icon-only" aria-label="Excluir" onClick={async () => {
                   if (!confirm("Excluir esta despesa?")) return;
                   const ok = await onDelete(initial.id);
                   if (ok !== false) onClose();
                 }}>
-                  <Trash2 size={16} /> Excluir
+                  <Trash2 size={16} />
                 </button>
               )}
             </div>
@@ -1475,12 +1487,12 @@ function GcExpenseTemplateForm({ initial, categories, onSave, onDelete, onClose 
           <div className="lb-form-actions">
             <div className="lb-form-actions-left">
               {initial && (
-                <button type="button" className="lb-btn danger" onClick={async () => {
+                <button type="button" className="lb-btn danger icon-only" aria-label="Excluir" onClick={async () => {
                   if (!confirm("Excluir esta recorrência? As instâncias já geradas continuam no histórico.")) return;
                   const ok = await onDelete(initial.id);
                   if (ok !== false) onClose();
                 }}>
-                  <Trash2 size={16} /> Excluir
+                  <Trash2 size={16} />
                 </button>
               )}
             </div>
@@ -1780,12 +1792,12 @@ function GcWishlistSavingsSnapshotForm({ initialCompetencia, snapshots, onSave, 
           <div className="lb-form-actions">
             <div className="lb-form-actions-left">
               {found && (
-                <button type="button" className="lb-btn danger" onClick={async () => {
+                <button type="button" className="lb-btn danger icon-only" aria-label="Excluir" onClick={async () => {
                   if (!confirm("Excluir o saldo deste mês?")) return;
                   const ok = await onDelete(found.id);
                   if (ok !== false) onClose();
                 }}>
-                  <Trash2 size={16} /> Excluir
+                  <Trash2 size={16} />
                 </button>
               )}
             </div>
@@ -1860,12 +1872,12 @@ function GcWishlistItemForm({ initial, onSave, onDelete, onClose }) {
           <div className="lb-form-actions">
             <div className="lb-form-actions-left">
               {initial && (
-                <button type="button" className="lb-btn danger" onClick={async () => {
+                <button type="button" className="lb-btn danger icon-only" aria-label="Excluir" onClick={async () => {
                   if (!confirm("Excluir este item da lista?")) return;
                   const ok = await onDelete(initial.id);
                   if (ok !== false) onClose();
                 }}>
-                  <Trash2 size={16} /> Excluir
+                  <Trash2 size={16} />
                 </button>
               )}
             </div>
@@ -2218,12 +2230,12 @@ function GcContaItemForm({ initial, onSave, onDelete, onClose }) {
           <div className="lb-form-actions">
             <div className="lb-form-actions-left">
               {initial && (
-                <button type="button" className="lb-btn danger" onClick={() => {
+                <button type="button" className="lb-btn danger icon-only" aria-label="Excluir" onClick={() => {
                   if (!confirm("Remover este item?")) return;
                   onDelete(initial.id);
                   onClose();
                 }}>
-                  <Trash2 size={16} /> Excluir
+                  <Trash2 size={16} />
                 </button>
               )}
             </div>
@@ -2786,7 +2798,7 @@ html.gc-iphone-preview .gc-sidebar { max-height: calc(100% - var(--gc-topbar-h) 
 .lb-field select { padding-right: 32px; cursor: pointer; }
 .lb-field input:focus, .lb-field select:focus { outline: 1.5px solid var(--gc-accent); outline-offset: 1px; }
 
-.lb-form-footer { position: sticky; bottom: 0; z-index: 3; margin: 0 calc(-1 * var(--sp-5)); padding: var(--sp-4) var(--sp-5) calc(var(--sp-4) + env(safe-area-inset-bottom, var(--gc-sab))); background: #fff; border-top: 1px solid var(--gc-line); display: flex; flex-direction: column; gap: var(--sp-3); }
+.lb-form-footer { grid-column: 1 / -1; position: sticky; bottom: 0; z-index: 3; margin: 0 calc(-1 * var(--sp-5)); padding: var(--sp-4) var(--sp-5) calc(var(--sp-4) + env(safe-area-inset-bottom, var(--gc-sab))); background: #fff; border-top: 1px solid var(--gc-line); display: flex; flex-direction: column; gap: var(--sp-3); }
 .lb-form-actions { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); flex-wrap: wrap; }
 .lb-form-actions-left { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
 .lb-form-actions-right { display: flex; align-items: center; gap: var(--sp-2); margin-left: auto; flex-wrap: wrap; justify-content: flex-end; }
