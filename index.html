@@ -123,6 +123,22 @@ function gcShiftCompetencia(comp, delta) {
 function gcFmtMoney(v) {
   return (v || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 }
+function gcFmtMoneyCompact(v) {
+  const n = v || 0;
+  if (Math.abs(n) >= 1000) {
+    return (n / 1000).toLocaleString("pt-BR", { maximumFractionDigits: 1 }) + "k";
+  }
+  return n.toLocaleString("pt-BR", { maximumFractionDigits: 0 });
+}
+function gcFmtSignedMoney(v) {
+  if (v > 0) return "+" + gcFmtMoney(v);
+  return gcFmtMoney(v);
+}
+function gcFmtSignedPct(pct) {
+  if (pct == null || !Number.isFinite(pct)) return "—";
+  const body = pct.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + "%";
+  return pct > 0 ? "+" + body : body;
+}
 
 // ---- Fórmulas de Receita (funções puras, sem React/Firebase) ----
 function gcFindIncomeEntry(entries, sourceId, competencia) {
@@ -274,6 +290,19 @@ function gcSaldoEmCaixa(snapshots) {
 }
 function gcPoderDeCompra(saldoEmCaixa) {
   return (saldoEmCaixa / GC_PODER_COMPRA_BASE) * 100;
+}
+// Variação entre dois snapshots consecutivos (por competência).
+// pct = null quando o saldo anterior é 0 (divisão indefinida).
+function gcVariacaoSnapshot(atual, anterior) {
+  if (!atual || !anterior) return null;
+  const delta = (atual.saldo || 0) - (anterior.saldo || 0);
+  const ant = anterior.saldo || 0;
+  return { delta, pct: ant === 0 ? null : (delta / ant) * 100 };
+}
+function gcDeltaTone(delta) {
+  if (delta > 0) return "gc-delta-up";
+  if (delta < 0) return "gc-delta-down";
+  return "gc-delta-flat";
 }
 
 // ---- Fórmulas do Dashboard (funções puras) ----
@@ -825,6 +854,7 @@ function EmptyState({ icon, title, message, action }) {
    vai usar na Fase 2).
 ----------------------------------------------------------------*/
 function GcReceitas({ sources, entries, projections, competencia, onCompetenciaChange, onEditSource, onEditProjection, onSaveEntryValor }) {
+  const [mostrarExtrasZerados, setMostrarExtrasZerados] = useState(false);
   const ano = competencia.slice(0, 4);
   const projection = gcFindIncomeProjection(projections, ano);
   const rendaFixaAnual = gcRendaFixaAnualGarantida(projection);
@@ -833,6 +863,14 @@ function GcReceitas({ sources, entries, projections, competencia, onCompetenciaC
   const ativos = sources.filter(s => s.ativo !== false).slice().sort((a, b) => (a.ordem || 0) - (b.ordem || 0));
   const ativoIds = new Set(ativos.map(s => s.id));
   const monthTotal = gcMonthEntriesTotal(entries.filter(e => ativoIds.has(e.sourceId)), competencia);
+  // Extra só aparece no mês se tiver valor > 0 (ex.: Cambridge some nos meses sem aula).
+  // "Lançar extra" revela as ocultas pra digitar um valor novo.
+  const temValorNoMes = (source) => {
+    const entry = gcFindIncomeEntry(entries, source.id, competencia);
+    return !!(entry && Number(entry.valor) > 0);
+  };
+  const extrasOcultos = ativos.filter(s => s.tipo === "extra" && !temValorNoMes(s));
+  const listados = ativos.filter(s => s.tipo !== "extra" || temValorNoMes(s) || mostrarExtrasZerados);
 
   return (
     <div className="gc-screen">
@@ -861,7 +899,7 @@ function GcReceitas({ sources, entries, projections, competencia, onCompetenciaC
         <EmptyState icon={<TrendingUp size={40} />} title="Nenhuma fonte de receita" message="Toque no + pra cadastrar seu salário ou uma renda extra." />
       ) : (
         <div className="gc-list">
-          {ativos.map(source => {
+          {listados.map(source => {
             const entry = gcFindIncomeEntry(entries, source.id, competencia);
             return (
               <div className="gc-list-row" key={source.id}>
@@ -883,6 +921,11 @@ function GcReceitas({ sources, entries, projections, competencia, onCompetenciaC
               </div>
             );
           })}
+          {extrasOcultos.length > 0 && !mostrarExtrasZerados && (
+            <button type="button" className="gc-list-more" onClick={() => setMostrarExtrasZerados(true)}>
+              Lançar extra deste mês
+            </button>
+          )}
           <div className="gc-list-total">
             <span>Total do mês</span>
             <span className="gc-money">{gcFmtMoney(monthTotal)}</span>
@@ -1368,11 +1411,16 @@ function GcManageCategoriesModal({ categories, onSave, onDelete, onClose }) {
    pro mês selecionado + histórico + os 2 indicadores que dependem dele no
    Dashboard (Saldo em Caixa / Poder de Compra).
 ----------------------------------------------------------------*/
-function GcInvestimentos({ snapshots, competencia, onCompetenciaChange, onSaveSaldo }) {
+function GcInvestimentos({ snapshots }) {
   const saldoEmCaixa = gcSaldoEmCaixa(snapshots);
-  const poderDeCompra = gcPoderDeCompra(saldoEmCaixa);
-  const atual = gcFindInvestmentSnapshot(snapshots, competencia);
-  const historico = snapshots.slice().sort((a, b) => b.competencia.localeCompare(a.competencia));
+  const asc = snapshots.slice().sort((a, b) => a.competencia.localeCompare(b.competencia));
+  const historico = asc.slice().reverse();
+  const ultimoPar = asc.length >= 2 ? gcVariacaoSnapshot(asc[asc.length - 1], asc[asc.length - 2]) : null;
+  const chartItems = asc.map(s => ({
+    label: competenciaLabel(s.competencia).split(" ")[0],
+    value: s.saldo || 0,
+    id: s.competencia,
+  }));
 
   return (
     <div className="gc-screen">
@@ -1382,40 +1430,42 @@ function GcInvestimentos({ snapshots, competencia, onCompetenciaChange, onSaveSa
           <span className="gc-statcard-cap">Saldo em Caixa</span>
         </div>
         <div className="gc-statcard">
-          <span className="gc-statcard-num">{poderDeCompra.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%</span>
-          <span className="gc-statcard-cap">Poder de Compra</span>
+          <span className={"gc-statcard-num" + (ultimoPar ? " " + gcDeltaTone(ultimoPar.delta) : "")}>
+            {ultimoPar ? gcFmtSignedPct(ultimoPar.pct) : "—"}
+          </span>
+          <span className="gc-statcard-cap">Último mês</span>
         </div>
       </div>
 
-      <div className="gc-month-switch">
-        <button type="button" className="lb-icon-btn" onClick={() => onCompetenciaChange(gcShiftCompetencia(competencia, -1))} aria-label="Mês anterior"><ChevronLeft size={20} /></button>
-        <span className="gc-month-label">{competenciaLabel(competencia)}</span>
-        <button type="button" className="lb-icon-btn" onClick={() => onCompetenciaChange(gcShiftCompetencia(competencia, 1))} aria-label="Próximo mês"><ChevronRight size={20} /></button>
-      </div>
-
-      <Field label={`Saldo em ${competenciaLabel(competencia)}`}>
-        <input
-          type="number" inputMode="decimal" step="0.01" placeholder="0,00" className="gc-money"
-          defaultValue={atual ? atual.saldo : ""}
-          key={competencia + (atual ? atual.id : "novo")}
-          onBlur={(e) => {
-            const saldo = parseFloat(e.target.value.replace(",", ".")) || 0;
-            if (!atual && saldo === 0) return;
-            onSaveSaldo(competencia, atual ? atual.id : null, saldo);
-          }}
-        />
-      </Field>
+      {chartItems.length >= 2 && (
+        <div className="gc-dashboard-section">
+          <h3 className="gc-section-title">Evolução</h3>
+          <GcAreaChart items={chartItems} showValues />
+        </div>
+      )}
 
       {historico.length === 0 ? (
-        <EmptyState icon={<TrendingUp size={40} />} title="Nenhum saldo registrado" message="Lance o saldo do mês acima ou pelo +." />
+        <EmptyState icon={<TrendingUp size={40} />} title="Nenhum saldo registrado" message="Toque no + pra registrar o saldo do mês." />
       ) : (
         <div className="gc-list">
-          {historico.map(s => (
-            <div className="gc-list-row" key={s.id}>
-              <span className="gc-list-row-title" style={{ flex: 1 }}>{competenciaLabel(s.competencia)}</span>
-              <span className="gc-row-valor-display gc-money">{gcFmtMoney(s.saldo)}</span>
-            </div>
-          ))}
+          {historico.map((s, i) => {
+            // historico é desc; o anterior cronológico é o próximo na lista
+            const anterior = historico[i + 1] || null;
+            const variacao = gcVariacaoSnapshot(s, anterior);
+            return (
+              <div className="gc-list-row" key={s.id}>
+                <span className="gc-list-row-title" style={{ flex: 1 }}>{competenciaLabel(s.competencia)}</span>
+                <span className="gc-invest-row-vals">
+                  <span className="gc-row-valor-display gc-money">{gcFmtMoney(s.saldo)}</span>
+                  {variacao && (
+                    <small className={"gc-list-row-sub " + gcDeltaTone(variacao.delta)}>
+                      {gcFmtSignedMoney(variacao.delta)} · {gcFmtSignedPct(variacao.pct)}
+                    </small>
+                  )}
+                </span>
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
@@ -1472,10 +1522,17 @@ function GcInvestmentSnapshotForm({ initialCompetencia, snapshots, onSave, onClo
    agrupada por categoria, com subtotal por grupo e total geral (só itens
    ainda não comprados contam).
 ----------------------------------------------------------------*/
-function GcSonhos({ items, onToggleComprado, onEdit }) {
+function GcSonhos({ items, poderDeCompra, onToggleComprado, onEdit }) {
   const { groups, total } = gcWishlistGroups(items);
+  const fmtPct = (v) => v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + "%";
   return (
     <div className="gc-screen">
+      <div className="gc-statcards gc-statcards-1">
+        <div className="gc-statcard">
+          <span className="gc-statcard-num">{fmtPct(poderDeCompra || 0)}</span>
+          <span className="gc-statcard-cap">Poder de Compra</span>
+        </div>
+      </div>
       {groups.length === 0 ? (
         <EmptyState icon={<Gift size={40} />} title="Nenhum item na lista" message="Toque no + pra adicionar algo que você quer comprar." />
       ) : (
@@ -1614,26 +1671,38 @@ function GcColumnsGrouped({ items }) {
   );
 }
 
-function GcAreaChart({ items }) {
+function GcAreaChart({ items, showValues }) {
   const max = Math.max(...items.map(i => i.value), 1);
-  const w = 300, h = 120, pad = 6;
-  const stepX = items.length > 1 ? (w - pad * 2) / (items.length - 1) : 0;
-  const pontos = items.map((it, i) => [pad + i * stepX, pad + (h - pad * 2) * (1 - it.value / max)]);
+  const w = 300, h = 120, padX = 6, padTop = showValues ? 16 : 6, padBottom = 6;
+  const stepX = items.length > 1 ? (w - padX * 2) / (items.length - 1) : 0;
+  const pontos = items.map((it, i) => [padX + i * stepX, padTop + (h - padTop - padBottom) * (1 - it.value / max)]);
   const linha = pontos.map((p, i) => (i === 0 ? "M" : "L") + p[0].toFixed(1) + " " + p[1].toFixed(1)).join(" ");
-  const area = `${linha} L ${pontos[pontos.length - 1][0].toFixed(1)} ${h - pad} L ${pontos[0][0].toFixed(1)} ${h - pad} Z`;
-  const padPct = (pad / w) * 100;
+  const area = `${linha} L ${pontos[pontos.length - 1][0].toFixed(1)} ${h - padBottom} L ${pontos[0][0].toFixed(1)} ${h - padBottom} Z`;
+  const padPct = (padX / w) * 100;
   return (
     <div className="gc-area-wrap">
-      <svg viewBox={`0 0 ${w} ${h}`} className="gc-area-chart" preserveAspectRatio="none">
-        <path d={area} className="gc-area-fill" />
-        <path d={linha} className="gc-area-line" fill="none" />
-        {pontos.map((p, i) => (
-          <circle key={items[i].label} cx={p[0]} cy={p[1]} r="2.2" className="gc-area-dot" />
-        ))}
-      </svg>
+      <div className="gc-area-plot">
+        <svg viewBox={`0 0 ${w} ${h}`} className="gc-area-chart" preserveAspectRatio="none">
+          <path d={area} className="gc-area-fill" />
+          <path d={linha} className="gc-area-line" fill="none" />
+          {pontos.map((p, i) => (
+            <circle key={items[i].id || items[i].label} cx={p[0]} cy={p[1]} r="2.2" className="gc-area-dot" />
+          ))}
+        </svg>
+        {showValues && (
+          <div className="gc-area-values" aria-hidden="true">
+            {pontos.map((p, i) => (
+              <span
+                key={"v-" + (items[i].id || items[i].label)}
+                style={{ left: (p[0] / w) * 100 + "%", top: (p[1] / h) * 100 + "%" }}
+              >{gcFmtMoneyCompact(items[i].value)}</span>
+            ))}
+          </div>
+        )}
+      </div>
       <div className="gc-area-labels" style={{ paddingLeft: padPct + "%", paddingRight: padPct + "%" }}>
         {items.map(it => (
-          <span key={it.label} className="gc-area-label">{it.label}</span>
+          <span key={it.id || it.label} className="gc-area-label">{it.label}</span>
         ))}
       </div>
     </div>
@@ -1777,7 +1846,6 @@ function App({ session }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [receitasComp, setReceitasComp] = useState(gcInitialReceitasCompetencia);
   const [despesasComp, setDespesasComp] = useState(competenciaAtual);
-  const [investimentosComp, setInvestimentosComp] = useState(competenciaAtual);
   const [dashboardAno, setDashboardAno] = useState(() => competenciaAtual().slice(0, 4));
   const [sourceForm, setSourceForm] = useState(null);
   const [projectionForm, setProjectionForm] = useState(null);
@@ -1904,12 +1972,14 @@ function App({ session }) {
           ) : subTab === "recorrencias" ? (
             <GcRecorrencias templates={expenseTemplates} categories={expenseCategories} onEdit={(t) => setTemplateForm({ initial: t })} />
           ) : subTab === "investimentos" ? (
-            <GcInvestimentos
-              snapshots={investmentSnapshots} competencia={investimentosComp} onCompetenciaChange={setInvestimentosComp}
-              onSaveSaldo={(competencia, existingId, saldo) => saveInvestmentSnapshot({ id: existingId || uid(), competencia, saldo, observacao: "" })}
-            />
+            <GcInvestimentos snapshots={investmentSnapshots} />
           ) : subTab === "sonhos" ? (
-            <GcSonhos items={wishlistItems} onToggleComprado={toggleWishlistComprado} onEdit={(item) => setWishlistForm({ initial: item })} />
+            <GcSonhos
+              items={wishlistItems}
+              poderDeCompra={gcPoderDeCompra(gcSaldoEmCaixa(investmentSnapshots))}
+              onToggleComprado={toggleWishlistComprado}
+              onEdit={(item) => setWishlistForm({ initial: item })}
+            />
           ) : (
             <EmptyState
               icon={current ? current.icon(40) : <BarChart3 size={40} />}
@@ -1929,7 +1999,7 @@ function App({ session }) {
               else if (subTab === "receitas") setSourceForm({ initial: null });
               else if (subTab === "despesas") setDespesasFabMenu(true);
               else if (subTab === "recorrencias") setTemplateForm({ initial: null });
-              else if (subTab === "investimentos") setSnapshotForm({ initialCompetencia: investimentosComp });
+              else if (subTab === "investimentos") setSnapshotForm({ initialCompetencia: competenciaAtual() });
               else if (subTab === "sonhos") setWishlistForm({ initial: null });
             }}
             aria-label={subTab === "dashboard" ? "Adicionar" : subTab === "receitas" ? "Nova fonte de receita" : subTab === "despesas" ? "Nova despesa" : subTab === "recorrencias" ? "Nova recorrência" : subTab === "investimentos" ? "Registrar saldo" : subTab === "sonhos" ? "Novo item" : "Adicionar"}>
@@ -1953,7 +2023,7 @@ function App({ session }) {
                 <TrendingUp size={22} />
                 <span className="gc-fab-option-txt"><strong>Nova fonte de receita</strong><small>Salário, extra ou outra fonte fixa</small></span>
               </button>
-              <button type="button" className="gc-fab-option" onClick={() => { setDashboardFabMenu(false); setSnapshotForm({ initialCompetencia: investimentosComp }); }}>
+              <button type="button" className="gc-fab-option" onClick={() => { setDashboardFabMenu(false); setSnapshotForm({ initialCompetencia: competenciaAtual() }); }}>
                 <BarChart3 size={22} />
                 <span className="gc-fab-option-txt"><strong>Novo saldo de investimento</strong><small>Atualiza o Saldo em Caixa deste mês</small></span>
               </button>
@@ -2234,8 +2304,13 @@ div.gc-statcard { cursor: default; }
 .gc-list-total { display: flex; align-items: center; justify-content: space-between; padding: var(--sp-3) var(--sp-4); background: var(--gc-surface-2); font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 14.5px; }
 
 .gc-statcards-2 { grid-template-columns: repeat(2, 1fr); }
+.gc-statcards-1 { grid-template-columns: 1fr; }
 .gc-num-red { color: var(--gc-red); }
 .gc-num-gold { color: var(--gc-gold); }
+.gc-delta-up { color: var(--gc-accent) !important; }
+.gc-delta-down { color: var(--gc-red) !important; }
+.gc-delta-flat { color: var(--gc-ink-soft) !important; }
+.gc-invest-row-vals { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
 
 .gc-group { display: flex; flex-direction: column; gap: var(--sp-2); }
 .gc-group-header { display: flex; align-items: center; justify-content: space-between; padding: 0 var(--sp-1); font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 12px; text-transform: uppercase; letter-spacing: .4px; color: var(--gc-ink-soft); }
@@ -2283,10 +2358,23 @@ button.gc-list-row-btn:hover { background: var(--gc-surface-2); }
 .gc-legend-b { background: var(--gc-red); }
 
 .gc-area-wrap { display: flex; flex-direction: column; gap: 6px; }
+.gc-area-plot { position: relative; width: 100%; }
 .gc-area-chart { width: 100%; height: 120px; display: block; }
 .gc-area-fill { fill: color-mix(in srgb, var(--gc-accent) 22%, transparent); }
 .gc-area-line { stroke: var(--gc-accent); stroke-width: 2.5; }
 .gc-area-dot { fill: var(--gc-accent); }
+.gc-area-values { position: absolute; inset: 0; pointer-events: none; }
+.gc-area-values span {
+  position: absolute;
+  transform: translate(-50%, calc(-100% - 2px));
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 10px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--gc-accent);
+  white-space: nowrap;
+  line-height: 1;
+}
 .gc-area-labels { display: flex; justify-content: space-between; }
 .gc-area-label { font-family: 'Space Grotesk', sans-serif; font-size: 10px; color: var(--gc-ink-soft); text-align: center; line-height: 1; }
 
