@@ -49,9 +49,9 @@ completo de estruturação em `C:\Users\gui30\.claude\plans\c-users-gui30-downlo
 
 ## Modelo de dados
 Sete tabelas normalizadas (`income_sources`/`income_entries`/
-`income_projections` da Fase 1 e `expense_templates`/`expense_instances` da
-Fase 2 já implementadas; `investment_snapshots` e `wishlist_items` entram nas
-próximas fases — ver Roadmap):
+`income_projections` da Fase 1, `expense_templates`/`expense_instances` da
+Fase 2 e `investment_snapshots` da Fase 3 já implementadas; só
+`wishlist_items` falta — ver Roadmap):
 - `income_sources` — fontes de renda: `nome`, `tipo` (`work`|`extra`),
   `ativo`, `ordem`.
 - `income_entries` — um lançamento por fonte por mês: `source_id`,
@@ -111,11 +111,10 @@ reajuste de preço, ex. Disney+ subindo mês a mês).
   (Guitchelin) e `MonthLineChart`/`PieChart` (Letterborgs).
 
 ## Fórmulas (constantes editáveis no topo do script)
-- `GC_PODER_COMPRA_BASE = 1000` — **A CONFIRMAR COM O GUI**: bate
-  exatamente com a planilha (`saldoEmCaixa/1000*100`), mas o significado da
-  base R$1000 não está documentado. Confirmar antes de fechar a tela de
-  Dashboard (Fase 5); até lá, manter como constante nomeada, nunca embutir a
-  razão numa função.
+- `GC_PODER_COMPRA_BASE = 1000` — **confirmado pelo Gui** (Fase 3):
+  `saldoEmCaixa / 1000 * 100`, bate exatamente com a planilha (5177,32% pro
+  saldo de R$51.773,18). Mantida como constante nomeada, nunca embutida
+  diretamente numa função.
 - `gcTaxaDePoupanca = (faturamentoAnual - custoDeVidaAnual) / faturamentoAnual`,
   `gcMediaMensalDeGastos = custoDeVidaAnual / 12`, `gcSaldoEmCaixa` = saldo do
   snapshot de investimento mais recente — todas conferidas contra os números
@@ -139,7 +138,11 @@ reajuste de preço, ex. Disney+ subindo mês a mês).
   `GcExpenseInstanceForm`, `GcExpenseTemplateForm`, motor
   `gcGenerateMissingInstances` (geração lazy até o mês atual, mensal ou
   anual, respeitando pausa/data-fim).
-- Fase 3 — Investimentos.
+- ~~Fase 3 — Investimentos~~ ✅ feito: `GcInvestimentos` (saldo mensal
+  editável inline + histórico + statcards Saldo em Caixa/Poder de Compra),
+  `GcInvestmentSnapshotForm`. **`GC_PODER_COMPRA_BASE = 1000` confirmado
+  pelo Gui** como a base a usar (bate exatamente com a planilha: 5177,32%
+  em modo demo).
 - Fase 4 — Lista de Sonhos.
 - Fase 5 — Dashboard + Análises (big numbers, fluxo de caixa, gráficos);
   confirmar `GC_PODER_COMPRA_BASE` com o Gui antes de fechar essa fase.
@@ -154,8 +157,8 @@ Sem etapa de build, o write manda todas as colunas — coluna nova no objeto
 exige coluna nova na tabela ANTES de publicar, senão o upsert falha. O
 `schema.sql` guarda cada `alter table ... add column if not exists ...`
 comentado; rodar a linha uma vez no SQL Editor. Última coluna adicionada:
-nenhuma ainda desde o schema inicial da Fase 2 (`expense_templates`/
-`expense_instances` já nasceram com todas as colunas).
+nenhuma ainda desde o schema inicial da Fase 3 (`investment_snapshots` já
+nasceu com todas as colunas).
 
 ## Como verificar mudanças
 Abra o `index.html` no navegador — entra direto em modo demo local
@@ -195,7 +198,17 @@ ser provisionado).
   em Recorrências (deve abrir direto o formulário de nova recorrência, com o
   campo "Mês de cobrança" aparecendo só quando a frequência é Anual).
 
-A partir da Fase 3, cada fase acrescenta seu próprio roteiro de verificação
+- **Investimentos (Fase 3)**: abra Investimentos pela gaveta — em modo demo
+  deve mostrar Saldo em Caixa R$51.773,18 e Poder de Compra 5.177,32%
+  (mesmos números da planilha), com o histórico de Jan a Jul/2026. Edite o
+  campo "Saldo em <mês atual>" (ele começa vazio, já que o demo só tem dado
+  até julho) e confirme que, ao sair do campo, o valor aparece no topo do
+  histórico e que Saldo em Caixa/Poder de Compra recalculam imediatamente
+  (o snapshot mais recente por competência manda, não por ordem de
+  cadastro). Toque no FAB — deve abrir "Registrar saldo" pré-preenchido com
+  o mês atual e o valor já salvo dele.
+
+A partir da Fase 4, cada fase acrescenta seu próprio roteiro de verificação
 (ver a seção "Verification Plan" do plano de estruturação) — recarregar e
 confirmar persistência via Supabase (depois que o projeto for provisionado).
 

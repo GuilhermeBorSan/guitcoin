@@ -216,6 +216,28 @@ function gcGenerateMissingInstances(templates, instances, competenciaLimite) {
   }
   return novas;
 }
+
+// ---- Fórmulas de Investimentos (funções puras) ----
+// A CONFIRMAR COM O GUI: bate exatamente com a planilha
+// (saldoEmCaixa/1000*100 ≈ 5177.32% quando saldoEmCaixa = 51773.18), mas o
+// significado da base R$1.000 não está documentado em lugar nenhum. Fica
+// como constante nomeada e editável até confirmar — nunca embutir a razão
+// /1000*100 direto numa função (ver CLAUDE.md > Fórmulas).
+const GC_PODER_COMPRA_BASE = 1000;
+function gcFindInvestmentSnapshot(snapshots, competencia) {
+  return snapshots.find(s => s.competencia === competencia) || null;
+}
+// Saldo em Caixa = saldo do snapshot mais recente (é um valor que o próprio
+// Gui digita todo mês, não é derivado de receitas/despesas — pode até cair,
+// ex. um saque).
+function gcSaldoEmCaixa(snapshots) {
+  if (!snapshots.length) return 0;
+  const maisRecente = snapshots.slice().sort((a, b) => a.competencia.localeCompare(b.competencia)).slice(-1)[0];
+  return maisRecente.saldo || 0;
+}
+function gcPoderDeCompra(saldoEmCaixa) {
+  return (saldoEmCaixa / GC_PODER_COMPRA_BASE) * 100;
+}
 // Preview local: localhost entra direto no app com dados fictícios, sem
 // gravar no Supabase de produção. Em guitcoin.vercel.app isso fica off.
 const GC_IS_LOCAL = ["localhost", "127.0.0.1"].includes(location.hostname);
@@ -317,6 +339,8 @@ const gcExpenseInstanceToRow = (i) => ({
   compartilhado: !!i.compartilhado, compartilhado_com: i.compartilhadoCom || null,
   minha_parcela_pct: i.minhaParcelaPct != null ? i.minhaParcelaPct : 100,
 });
+const gcRowToInvestmentSnapshot = (row) => ({ id: row.id, competencia: row.competencia, saldo: Number(row.saldo) || 0, observacao: row.observacao || "" });
+const gcInvestmentSnapshotToRow = (s) => ({ id: s.id, competencia: s.competencia, saldo: s.saldo || 0, observacao: s.observacao || null });
 
 // ---- Demo local (GC_IS_LOCAL): dados fictícios pra abrir o app sem
 // Supabase, com os números reais da planilha original (WriteChoice/
@@ -367,6 +391,18 @@ const GC_DEMO_DATA = {
     { id: "demo-inst-compra-1", templateId: null, grupo: "compras", descricao: "Compras", competencia: "2026-01", valor: 358.09, pago: true, compartilhado: false, compartilhadoCom: "", minhaParcelaPct: 100 },
     { id: "demo-inst-compra-2", templateId: null, grupo: "compras", descricao: "Compras", competencia: "2026-02", valor: 183.27, pago: true, compartilhado: false, compartilhadoCom: "", minhaParcelaPct: 100 },
   ],
+  // Saldo mensal (net worth) — mesmos números da linha INVESTIMENTOS da
+  // planilha original. Ago/Set (e adiante) ficam sem snapshot de propósito:
+  // Saldo em Caixa deve continuar mostrando o último valor conhecido (Jul).
+  investmentSnapshots: [
+    { id: "demo-inv-1", competencia: "2026-01", saldo: 42607.37, observacao: "" },
+    { id: "demo-inv-2", competencia: "2026-02", saldo: 42607.37, observacao: "" },
+    { id: "demo-inv-3", competencia: "2026-03", saldo: 45249.13, observacao: "" },
+    { id: "demo-inv-4", competencia: "2026-04", saldo: 45249.13, observacao: "" },
+    { id: "demo-inv-5", competencia: "2026-05", saldo: 47497.83, observacao: "" },
+    { id: "demo-inv-6", competencia: "2026-06", saldo: 51134.15, observacao: "" },
+    { id: "demo-inv-7", competencia: "2026-07", saldo: 51773.18, observacao: "" },
+  ],
 };
 
 // ---- Dados (Supabase: tabelas de Receita nesta fase; Despesas/
@@ -388,6 +424,7 @@ function useGcData(session) {
     const geradas = gcGenerateMissingInstances(GC_DEMO_DATA.expenseTemplates, avulsas, competenciaAtual());
     return [...avulsas, ...geradas];
   });
+  const [investmentSnapshots, setInvestmentSnapshots] = useState(GC_IS_LOCAL ? GC_DEMO_DATA.investmentSnapshots : []);
   const [loading, setLoading] = useState(!GC_IS_LOCAL);
   const [error, setError] = useState(null);
 
@@ -395,18 +432,20 @@ function useGcData(session) {
     if (GC_IS_LOCAL || !gcSupabase) { setLoading(false); return; }
     setLoading(true);
     try {
-      const [srcRes, entRes, projRes, tplRes, instRes] = await Promise.all([
+      const [srcRes, entRes, projRes, tplRes, instRes, invRes] = await Promise.all([
         gcSupabase.from("income_sources").select("*").order("ordem", { ascending: true }),
         gcSupabase.from("income_entries").select("*").order("competencia", { ascending: true }),
         gcSupabase.from("income_projections").select("*").order("ano", { ascending: true }),
         gcSupabase.from("expense_templates").select("*").order("nome", { ascending: true }),
         gcSupabase.from("expense_instances").select("*").order("competencia", { ascending: true }),
+        gcSupabase.from("investment_snapshots").select("*").order("competencia", { ascending: true }),
       ]);
       if (srcRes.error) throw srcRes.error;
       if (entRes.error) throw entRes.error;
       if (projRes.error) throw projRes.error;
       if (tplRes.error) throw tplRes.error;
       if (instRes.error) throw instRes.error;
+      if (invRes.error) throw invRes.error;
       const templates = (tplRes.data || []).map(gcRowToExpenseTemplate);
       let instances = (instRes.data || []).map(gcRowToExpenseInstance);
       // Geração lazy: cria só as instâncias que faltam até o mês atual e já
@@ -422,6 +461,7 @@ function useGcData(session) {
       setIncomeProjections((projRes.data || []).map(gcRowToIncomeProjection));
       setExpenseTemplates(templates);
       setExpenseInstances(instances);
+      setInvestmentSnapshots((invRes.data || []).map(gcRowToInvestmentSnapshot));
     } catch (err) {
       console.error(err);
       setError(gcWriteErrorMsg(err, "carregar os dados"));
@@ -518,11 +558,20 @@ function useGcData(session) {
     return true;
   };
 
+  const saveInvestmentSnapshot = async (snapshot) => {
+    setInvestmentSnapshots(prev => prev.some(s => s.id === snapshot.id) ? prev.map(s => s.id === snapshot.id ? snapshot : s) : [...prev, snapshot]);
+    if (GC_IS_LOCAL) return true;
+    const { error: err } = await gcSupabase.from("investment_snapshots").upsert(gcInvestmentSnapshotToRow(snapshot));
+    if (err) { console.error(err); setError(gcWriteErrorMsg(err, "salvar o saldo")); await loadData(); return false; }
+    return true;
+  };
+
   return {
-    incomeSources, incomeEntries, incomeProjections, expenseTemplates, expenseInstances,
+    incomeSources, incomeEntries, incomeProjections, expenseTemplates, expenseInstances, investmentSnapshots,
     loading, error, dismissError: () => setError(null),
     saveIncomeSource, deleteIncomeSource, saveIncomeEntry, deleteIncomeEntry, saveIncomeProjection,
     saveExpenseTemplate, deleteExpenseTemplate, saveExpenseInstance, deleteExpenseInstance, toggleExpenseInstancePago,
+    saveInvestmentSnapshot,
   };
 }
 
@@ -1057,6 +1106,110 @@ function GcExpenseTemplateForm({ initial, onSave, onDelete, onClose }) {
 }
 
 /* ---------------------------------------------------------------
+   TELA: INVESTIMENTOS (Fase 3) — saldo mensal (net worth) editável inline
+   pro mês selecionado + histórico + os 2 indicadores que dependem dele no
+   Dashboard (Saldo em Caixa / Poder de Compra).
+----------------------------------------------------------------*/
+function GcInvestimentos({ snapshots, competencia, onCompetenciaChange, onSaveSaldo }) {
+  const saldoEmCaixa = gcSaldoEmCaixa(snapshots);
+  const poderDeCompra = gcPoderDeCompra(saldoEmCaixa);
+  const atual = gcFindInvestmentSnapshot(snapshots, competencia);
+  const historico = snapshots.slice().sort((a, b) => b.competencia.localeCompare(a.competencia));
+
+  return (
+    <div className="gc-screen">
+      <div className="gc-statcards gc-statcards-2">
+        <div className="gc-statcard">
+          <span className="gc-statcard-num gc-money">{gcFmtMoney(saldoEmCaixa)}</span>
+          <span className="gc-statcard-cap">Saldo em Caixa</span>
+        </div>
+        <div className="gc-statcard">
+          <span className="gc-statcard-num">{poderDeCompra.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%</span>
+          <span className="gc-statcard-cap">Poder de Compra</span>
+        </div>
+      </div>
+
+      <div className="gc-month-switch">
+        <button type="button" className="lb-icon-btn" onClick={() => onCompetenciaChange(gcShiftCompetencia(competencia, -1))} aria-label="Mês anterior"><ChevronLeft size={20} /></button>
+        <span className="gc-month-label">{competenciaLabel(competencia)}</span>
+        <button type="button" className="lb-icon-btn" onClick={() => onCompetenciaChange(gcShiftCompetencia(competencia, 1))} aria-label="Próximo mês"><ChevronRight size={20} /></button>
+      </div>
+
+      <Field label={`Saldo em ${competenciaLabel(competencia)}`}>
+        <input
+          type="number" inputMode="decimal" step="0.01" placeholder="0,00" className="gc-money"
+          defaultValue={atual ? atual.saldo : ""}
+          key={competencia + (atual ? atual.id : "novo")}
+          onBlur={(e) => {
+            const saldo = parseFloat(e.target.value.replace(",", ".")) || 0;
+            if (!atual && saldo === 0) return;
+            onSaveSaldo(competencia, atual ? atual.id : null, saldo);
+          }}
+        />
+      </Field>
+
+      {historico.length === 0 ? (
+        <EmptyState icon={<TrendingUp size={40} />} title="Nenhum saldo registrado" message="Lance o saldo do mês acima ou pelo +." />
+      ) : (
+        <div className="gc-list">
+          {historico.map(s => (
+            <div className="gc-list-row" key={s.id}>
+              <span className="gc-list-row-title" style={{ flex: 1 }}>{competenciaLabel(s.competencia)}</span>
+              <span className="gc-row-valor-display gc-money">{gcFmtMoney(s.saldo)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function GcInvestmentSnapshotForm({ initialCompetencia, snapshots, onSave, onClose }) {
+  const [competencia, setCompetencia] = useState(initialCompetencia);
+  const [saldo, setSaldo] = useState(() => { const f = gcFindInvestmentSnapshot(snapshots, initialCompetencia); return f ? String(f.saldo) : ""; });
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    const found = gcFindInvestmentSnapshot(snapshots, competencia);
+    setSaldo(found ? String(found.saldo) : "");
+  }, [competencia]);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setBusy(true);
+    const found = gcFindInvestmentSnapshot(snapshots, competencia);
+    const ok = await onSave({
+      id: found ? found.id : uid(), competencia,
+      saldo: parseFloat(String(saldo).replace(",", ".")) || 0,
+      observacao: found ? found.observacao : "",
+    });
+    setBusy(false);
+    if (ok !== false) onClose();
+  };
+
+  return (
+    <Modal title="Registrar saldo" onClose={onClose}>
+      <form onSubmit={submit} className="lb-form-grid">
+        <Field label="Mês">
+          <input type="month" value={competencia} onChange={e => setCompetencia(e.target.value)} required />
+        </Field>
+        <Field label="Saldo">
+          <input type="number" inputMode="decimal" step="0.01" value={saldo} onChange={e => setSaldo(e.target.value)} required autoFocus />
+        </Field>
+        <div className="lb-form-footer">
+          <div className="lb-form-actions">
+            <div className="lb-form-actions-right">
+              <button type="button" className="lb-btn ghost" onClick={onClose}>Cancelar</button>
+              <button type="submit" className="lb-btn primary" disabled={busy}>{busy ? "Salvando..." : "Salvar"}</button>
+            </div>
+          </div>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+/* ---------------------------------------------------------------
    SHELL DO APP (topbar, gaveta lateral, nav inferior + FAB contextual).
    Fase 0: telas ainda são placeholders (EmptyState) — cada uma vira de
    verdade na fase correspondente (ver CLAUDE.md > Roadmap).
@@ -1074,7 +1227,6 @@ const GC_NAV_ITEMS = [
 // ora só explica o que está por vir.
 function gcFabHint(subTab) {
   switch (subTab) {
-    case "investimentos": return "Registrar o saldo do mês chega na Fase 3.";
     case "sonhos": return "Adicionar um item à Lista de Sonhos chega na Fase 4.";
     default: return "As ações rápidas chegam junto com cada tela, fase a fase.";
   }
@@ -1090,10 +1242,11 @@ function gcInitialReceitasCompetencia() {
 
 function App({ session }) {
   const {
-    incomeSources, incomeEntries, incomeProjections, expenseTemplates, expenseInstances,
+    incomeSources, incomeEntries, incomeProjections, expenseTemplates, expenseInstances, investmentSnapshots,
     loading, error, dismissError,
     saveIncomeSource, deleteIncomeSource, saveIncomeEntry, saveIncomeProjection,
     saveExpenseTemplate, deleteExpenseTemplate, saveExpenseInstance, deleteExpenseInstance, toggleExpenseInstancePago,
+    saveInvestmentSnapshot,
   } = useGcData(session);
   // (deleteIncomeEntry existe no hook, ainda sem UI que remova um lançamento
   // pontual — fica pra quando a tela de Receitas ganhar essa ação.)
@@ -1102,10 +1255,12 @@ function App({ session }) {
   const [fabInfo, setFabInfo] = useState(false);
   const [receitasComp, setReceitasComp] = useState(gcInitialReceitasCompetencia);
   const [despesasComp, setDespesasComp] = useState(competenciaAtual);
+  const [investimentosComp, setInvestimentosComp] = useState(competenciaAtual);
   const [sourceForm, setSourceForm] = useState(null);
   const [projectionForm, setProjectionForm] = useState(null);
   const [instanceForm, setInstanceForm] = useState(null);
   const [templateForm, setTemplateForm] = useState(null);
+  const [snapshotForm, setSnapshotForm] = useState(null);
   const [despesasFabMenu, setDespesasFabMenu] = useState(false);
 
   useEffect(() => {
@@ -1183,6 +1338,11 @@ function App({ session }) {
             />
           ) : subTab === "recorrencias" ? (
             <GcRecorrencias templates={expenseTemplates} onEdit={(t) => setTemplateForm({ initial: t })} />
+          ) : subTab === "investimentos" ? (
+            <GcInvestimentos
+              snapshots={investmentSnapshots} competencia={investimentosComp} onCompetenciaChange={setInvestimentosComp}
+              onSaveSaldo={(competencia, existingId, saldo) => saveInvestmentSnapshot({ id: existingId || uid(), competencia, saldo, observacao: "" })}
+            />
           ) : (
             <EmptyState
               icon={current ? current.icon(40) : <BarChart3 size={40} />}
@@ -1205,9 +1365,10 @@ function App({ session }) {
               if (subTab === "receitas") setSourceForm({ initial: null });
               else if (subTab === "despesas") setDespesasFabMenu(true);
               else if (subTab === "recorrencias") setTemplateForm({ initial: null });
+              else if (subTab === "investimentos") setSnapshotForm({ initialCompetencia: investimentosComp });
               else setFabInfo(true);
             }}
-            aria-label={subTab === "receitas" ? "Nova fonte de receita" : subTab === "despesas" ? "Nova despesa" : subTab === "recorrencias" ? "Nova recorrência" : "Adicionar"}>
+            aria-label={subTab === "receitas" ? "Nova fonte de receita" : subTab === "despesas" ? "Nova despesa" : subTab === "recorrencias" ? "Nova recorrência" : subTab === "investimentos" ? "Registrar saldo" : "Adicionar"}>
             <Plus size={26} />
           </button>
           <button type="button" className={"gc-navbtn" + (subTab === "despesas" ? " active" : "")} onClick={() => setSubTab("despesas")}>
@@ -1245,6 +1406,9 @@ function App({ session }) {
         )}
         {templateForm && (
           <GcExpenseTemplateForm initial={templateForm.initial} onSave={saveExpenseTemplate} onDelete={deleteExpenseTemplate} onClose={() => setTemplateForm(null)} />
+        )}
+        {snapshotForm && (
+          <GcInvestmentSnapshotForm initialCompetencia={snapshotForm.initialCompetencia} snapshots={investmentSnapshots} onSave={saveInvestmentSnapshot} onClose={() => setSnapshotForm(null)} />
         )}
       </div>
     </>

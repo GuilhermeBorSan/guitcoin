@@ -8,8 +8,7 @@
 -- Cada tabela ganha 4 políticas de RLS (select/insert/update/delete), todas
 -- `using/with check (user_id = auth.uid())`.
 --
--- Fases seguintes (ainda sem tabela): Fase 3 — investment_snapshots
--- (Investimentos); Fase 4 — wishlist_items (Lista de Sonhos).
+-- Fase seguinte (ainda sem tabela): Fase 4 — wishlist_items (Lista de Sonhos).
 
 -- ===================== Fase 1: Receitas =====================
 
@@ -136,9 +135,32 @@ create policy "expense_instances_update_own" on public.expense_instances
 create policy "expense_instances_delete_own" on public.expense_instances
   for delete using (user_id = auth.uid());
 
+-- ===================== Fase 3: Investimentos =====================
+
+create table if not exists public.investment_snapshots (
+  id text primary key,
+  user_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  competencia text not null, -- "YYYY-MM"
+  saldo numeric not null default 0, -- saldo/patrimônio no fim desse mês (net worth), não é um fluxo
+  observacao text,
+  created_at text,
+  inserted_at timestamptz not null default now()
+);
+
+alter table public.investment_snapshots enable row level security;
+
+create policy "investment_snapshots_select_own" on public.investment_snapshots
+  for select using (user_id = auth.uid());
+create policy "investment_snapshots_insert_own" on public.investment_snapshots
+  for insert with check (user_id = auth.uid());
+create policy "investment_snapshots_update_own" on public.investment_snapshots
+  for update using (user_id = auth.uid());
+create policy "investment_snapshots_delete_own" on public.investment_snapshots
+  for delete using (user_id = auth.uid());
+
 -- Convenção de migração: toda vez que um campo novo for adicionado a um
 -- objeto no index.html, adiciona a coluna aqui via `create table if not
 -- exists` (instalações novas) E deixa uma linha `alter table ... add column
 -- if not exists ...;` comentada logo abaixo, pra rodar uma vez no SQL Editor
 -- em instalações existentes. Última coluna adicionada: nenhuma ainda desde o
--- schema inicial da Fase 2.
+-- schema inicial da Fase 3.
