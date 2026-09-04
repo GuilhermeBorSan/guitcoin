@@ -4,10 +4,10 @@
   "description": "Controle financeiro pessoal do Gui.",
   "start_url": "./index.html",
   "display": "standalone",
-  "background_color": "#ffffff",
-  "theme_color": "#1C7A4D",
+  "background_color": "#0A0A0A",
+  "theme_color": "#D4B45A",
   "icons": [
-    { "src": "assets/icon.png", "type": "image/png", "sizes": "512x512", "purpose": "any" },
+    { "src": "assets/icon-gold.png", "type": "image/png", "sizes": "512x512", "purpose": "any" },
     { "src": "assets/icon-512.png", "type": "image/png", "sizes": "512x512", "purpose": "maskable" }
   ]
 }
