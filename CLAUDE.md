@@ -48,10 +48,10 @@ completo de estruturação em `C:\Users\gui30\.claude\plans\c-users-gui30-downlo
   recortes parciais.
 
 ## Modelo de dados
-Sete tabelas normalizadas (`income_sources`/`income_entries`/
-`income_projections` da Fase 1, `expense_templates`/`expense_instances` da
-Fase 2 e `investment_snapshots` da Fase 3 já implementadas; só
-`wishlist_items` falta — ver Roadmap):
+As sete tabelas normalizadas do plano de estruturação estão todas
+implementadas: `income_sources`/`income_entries`/`income_projections`
+(Fase 1), `expense_templates`/`expense_instances` (Fase 2),
+`investment_snapshots` (Fase 3) e `wishlist_items` (Fase 4):
 - `income_sources` — fontes de renda: `nome`, `tipo` (`work`|`extra`),
   `ativo`, `ordem`.
 - `income_entries` — um lançamento por fonte por mês: `source_id`,
@@ -143,9 +143,10 @@ reajuste de preço, ex. Disney+ subindo mês a mês).
   `GcInvestmentSnapshotForm`. **`GC_PODER_COMPRA_BASE = 1000` confirmado
   pelo Gui** como a base a usar (bate exatamente com a planilha: 5177,32%
   em modo demo).
-- Fase 4 — Lista de Sonhos.
-- Fase 5 — Dashboard + Análises (big numbers, fluxo de caixa, gráficos);
-  confirmar `GC_PODER_COMPRA_BASE` com o Gui antes de fechar essa fase.
+- ~~Fase 4 — Lista de Sonhos~~ ✅ feito: `GcSonhos` (agrupada por categoria,
+  subtotal + total só dos itens não comprados), `GcWishlistItemForm`
+  (categoria como texto livre com sugestões via `<datalist>`).
+- Fase 5 — Dashboard + Análises (big numbers, fluxo de caixa, gráficos).
 - Hospedar na Vercel (`guitcoin.vercel.app`), repo estático sem build. URL de
   produção precisa estar em Supabase → Authentication → URL Configuration
   pro login funcionar lá.
@@ -157,8 +158,8 @@ Sem etapa de build, o write manda todas as colunas — coluna nova no objeto
 exige coluna nova na tabela ANTES de publicar, senão o upsert falha. O
 `schema.sql` guarda cada `alter table ... add column if not exists ...`
 comentado; rodar a linha uma vez no SQL Editor. Última coluna adicionada:
-nenhuma ainda desde o schema inicial da Fase 3 (`investment_snapshots` já
-nasceu com todas as colunas).
+nenhuma ainda — schema completo, as 7 tabelas do plano de estruturação já
+existem desde a Fase 4 (`wishlist_items` foi a última a nascer).
 
 ## Como verificar mudanças
 Abra o `index.html` no navegador — entra direto em modo demo local
@@ -208,9 +209,18 @@ ser provisionado).
   cadastro). Toque no FAB — deve abrir "Registrar saldo" pré-preenchido com
   o mês atual e o valor já salvo dele.
 
-A partir da Fase 4, cada fase acrescenta seu próprio roteiro de verificação
-(ver a seção "Verification Plan" do plano de estruturação) — recarregar e
-confirmar persistência via Supabase (depois que o projeto for provisionado).
+- **Lista de Sonhos (Fase 4)**: abra Lista de Sonhos pela gaveta — em modo
+  demo deve mostrar TECH (R$0,00, os 3 itens sem preço) e MISC (R$1.000,00,
+  os 2 vinis a R$500), Total R$1.000,00, batendo com a planilha. Marque um
+  item como comprado (ícone à esquerda da linha) e confirme que ele some da
+  lista e o subtotal/total recalculam. Toque numa linha pra editar (confirme
+  os campos pré-preenchidos) e no FAB pra criar um item novo (o campo
+  Categoria sugere as 6 categorias seed via autocomplete, mas aceita
+  qualquer texto).
+
+A partir da Fase 5, o roteiro de verificação está na seção "Verification
+Plan" do plano de estruturação — recarregar e confirmar persistência via
+Supabase (depois que o projeto for provisionado).
 
 ## Convenções de trabalho
 - Responder e escrever UI sempre em pt-BR.

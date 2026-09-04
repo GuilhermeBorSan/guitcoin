@@ -8,7 +8,6 @@
 -- Cada tabela ganha 4 políticas de RLS (select/insert/update/delete), todas
 -- `using/with check (user_id = auth.uid())`.
 --
--- Fase seguinte (ainda sem tabela): Fase 4 — wishlist_items (Lista de Sonhos).
 
 -- ===================== Fase 1: Receitas =====================
 
@@ -158,9 +157,38 @@ create policy "investment_snapshots_update_own" on public.investment_snapshots
 create policy "investment_snapshots_delete_own" on public.investment_snapshots
   for delete using (user_id = auth.uid());
 
+-- ===================== Fase 4: Lista de Sonhos =====================
+
+create table if not exists public.wishlist_items (
+  id text primary key,
+  user_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  categoria text not null default 'MISC', -- texto livre, seed CASA/LUNA/VESTUÁRIO/TECH/CARE/MISC
+  produto text not null,
+  marca text,
+  modelo text,
+  link text,
+  obs text,
+  preco numeric,
+  comprado boolean not null default false,
+  created_at text,
+  inserted_at timestamptz not null default now()
+);
+
+alter table public.wishlist_items enable row level security;
+
+create policy "wishlist_items_select_own" on public.wishlist_items
+  for select using (user_id = auth.uid());
+create policy "wishlist_items_insert_own" on public.wishlist_items
+  for insert with check (user_id = auth.uid());
+create policy "wishlist_items_update_own" on public.wishlist_items
+  for update using (user_id = auth.uid());
+create policy "wishlist_items_delete_own" on public.wishlist_items
+  for delete using (user_id = auth.uid());
+
 -- Convenção de migração: toda vez que um campo novo for adicionado a um
 -- objeto no index.html, adiciona a coluna aqui via `create table if not
 -- exists` (instalações novas) E deixa uma linha `alter table ... add column
 -- if not exists ...;` comentada logo abaixo, pra rodar uma vez no SQL Editor
 -- em instalações existentes. Última coluna adicionada: nenhuma ainda desde o
--- schema inicial da Fase 3.
+-- schema inicial da Fase 4 — schema completo, todas as 7 tabelas do plano
+-- de estruturação já existem.

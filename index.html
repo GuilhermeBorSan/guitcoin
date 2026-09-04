@@ -238,6 +238,25 @@ function gcSaldoEmCaixa(snapshots) {
 function gcPoderDeCompra(saldoEmCaixa) {
   return (saldoEmCaixa / GC_PODER_COMPRA_BASE) * 100;
 }
+
+// ---- Fórmulas de Lista de Sonhos (funções puras) ----
+const GC_WISHLIST_CATEGORIES = ["CASA", "LUNA", "VESTUÁRIO", "TECH", "CARE", "MISC"];
+// Agrupa por categoria (só os ainda não comprados contam no subtotal/total,
+// mesmo espírito do "SubTotal"/"Total" da planilha), preservando a ordem
+// das categorias seed e anexando categorias custom no fim.
+function gcWishlistGroups(items) {
+  const ativos = items.filter(i => !i.comprado);
+  const extras = Array.from(new Set(items.map(i => i.categoria))).filter(c => !GC_WISHLIST_CATEGORIES.includes(c));
+  const categorias = [...GC_WISHLIST_CATEGORIES, ...extras];
+  const groups = categorias
+    .map(categoria => {
+      const its = ativos.filter(i => i.categoria === categoria).sort((a, b) => (a.produto || "").localeCompare(b.produto || ""));
+      return { categoria, items: its, subtotal: its.reduce((s, i) => s + (i.preco || 0), 0) };
+    })
+    .filter(g => g.items.length > 0);
+  const total = groups.reduce((s, g) => s + g.subtotal, 0);
+  return { groups, total };
+}
 // Preview local: localhost entra direto no app com dados fictícios, sem
 // gravar no Supabase de produção. Em guitcoin.vercel.app isso fica off.
 const GC_IS_LOCAL = ["localhost", "127.0.0.1"].includes(location.hostname);
@@ -341,6 +360,16 @@ const gcExpenseInstanceToRow = (i) => ({
 });
 const gcRowToInvestmentSnapshot = (row) => ({ id: row.id, competencia: row.competencia, saldo: Number(row.saldo) || 0, observacao: row.observacao || "" });
 const gcInvestmentSnapshotToRow = (s) => ({ id: s.id, competencia: s.competencia, saldo: s.saldo || 0, observacao: s.observacao || null });
+const gcRowToWishlistItem = (row) => ({
+  id: row.id, categoria: row.categoria || "MISC", produto: row.produto,
+  marca: row.marca || "", modelo: row.modelo || "", link: row.link || "", obs: row.obs || "",
+  preco: row.preco != null ? Number(row.preco) : null, comprado: !!row.comprado,
+});
+const gcWishlistItemToRow = (i) => ({
+  id: i.id, categoria: i.categoria || "MISC", produto: i.produto,
+  marca: i.marca || null, modelo: i.modelo || null, link: i.link || null, obs: i.obs || null,
+  preco: i.preco != null ? i.preco : null, comprado: !!i.comprado,
+});
 
 // ---- Demo local (GC_IS_LOCAL): dados fictícios pra abrir o app sem
 // Supabase, com os números reais da planilha original (WriteChoice/
@@ -403,6 +432,15 @@ const GC_DEMO_DATA = {
     { id: "demo-inv-6", competencia: "2026-06", saldo: 51134.15, observacao: "" },
     { id: "demo-inv-7", competencia: "2026-07", saldo: 51773.18, observacao: "" },
   ],
+  // Lista de Sonhos: itens reais da planilha (TECH sem preço ainda, MISC
+  // com os 2 vinis a R$500 cada).
+  wishlistItems: [
+    { id: "demo-wish-cadeira", categoria: "TECH", produto: "cadeira", marca: "", modelo: "", link: "", obs: "", preco: null, comprado: false },
+    { id: "demo-wish-hub", categoria: "TECH", produto: "hub multi portas", marca: "", modelo: "", link: "", obs: "", preco: null, comprado: false },
+    { id: "demo-wish-cpu", categoria: "TECH", produto: "cpu", marca: "", modelo: "", link: "", obs: "", preco: null, comprado: false },
+    { id: "demo-wish-vinil-fearless", categoria: "MISC", produto: "Vinil: Fearless (TV)", marca: "", modelo: "", link: "", obs: "", preco: 500, comprado: false },
+    { id: "demo-wish-vinil-red", categoria: "MISC", produto: "Vinil: Red (TV)", marca: "", modelo: "", link: "", obs: "", preco: 500, comprado: false },
+  ],
 };
 
 // ---- Dados (Supabase: tabelas de Receita nesta fase; Despesas/
@@ -425,6 +463,7 @@ function useGcData(session) {
     return [...avulsas, ...geradas];
   });
   const [investmentSnapshots, setInvestmentSnapshots] = useState(GC_IS_LOCAL ? GC_DEMO_DATA.investmentSnapshots : []);
+  const [wishlistItems, setWishlistItems] = useState(GC_IS_LOCAL ? GC_DEMO_DATA.wishlistItems : []);
   const [loading, setLoading] = useState(!GC_IS_LOCAL);
   const [error, setError] = useState(null);
 
@@ -432,13 +471,14 @@ function useGcData(session) {
     if (GC_IS_LOCAL || !gcSupabase) { setLoading(false); return; }
     setLoading(true);
     try {
-      const [srcRes, entRes, projRes, tplRes, instRes, invRes] = await Promise.all([
+      const [srcRes, entRes, projRes, tplRes, instRes, invRes, wishRes] = await Promise.all([
         gcSupabase.from("income_sources").select("*").order("ordem", { ascending: true }),
         gcSupabase.from("income_entries").select("*").order("competencia", { ascending: true }),
         gcSupabase.from("income_projections").select("*").order("ano", { ascending: true }),
         gcSupabase.from("expense_templates").select("*").order("nome", { ascending: true }),
         gcSupabase.from("expense_instances").select("*").order("competencia", { ascending: true }),
         gcSupabase.from("investment_snapshots").select("*").order("competencia", { ascending: true }),
+        gcSupabase.from("wishlist_items").select("*").order("produto", { ascending: true }),
       ]);
       if (srcRes.error) throw srcRes.error;
       if (entRes.error) throw entRes.error;
@@ -446,6 +486,7 @@ function useGcData(session) {
       if (tplRes.error) throw tplRes.error;
       if (instRes.error) throw instRes.error;
       if (invRes.error) throw invRes.error;
+      if (wishRes.error) throw wishRes.error;
       const templates = (tplRes.data || []).map(gcRowToExpenseTemplate);
       let instances = (instRes.data || []).map(gcRowToExpenseInstance);
       // Geração lazy: cria só as instâncias que faltam até o mês atual e já
@@ -462,6 +503,7 @@ function useGcData(session) {
       setExpenseTemplates(templates);
       setExpenseInstances(instances);
       setInvestmentSnapshots((invRes.data || []).map(gcRowToInvestmentSnapshot));
+      setWishlistItems((wishRes.data || []).map(gcRowToWishlistItem));
     } catch (err) {
       console.error(err);
       setError(gcWriteErrorMsg(err, "carregar os dados"));
@@ -566,12 +608,38 @@ function useGcData(session) {
     return true;
   };
 
+  const saveWishlistItem = async (item) => {
+    setWishlistItems(prev => prev.some(i => i.id === item.id) ? prev.map(i => i.id === item.id ? item : i) : [...prev, item]);
+    if (GC_IS_LOCAL) return true;
+    const { error: err } = await gcSupabase.from("wishlist_items").upsert(gcWishlistItemToRow(item));
+    if (err) { console.error(err); setError(gcWriteErrorMsg(err, "salvar o item")); await loadData(); return false; }
+    return true;
+  };
+
+  const deleteWishlistItem = async (id) => {
+    setWishlistItems(prev => prev.filter(i => i.id !== id));
+    if (GC_IS_LOCAL) return true;
+    const { error: err } = await gcSupabase.from("wishlist_items").delete().eq("id", id);
+    if (err) { console.error(err); setError(gcWriteErrorMsg(err, "excluir o item")); await loadData(); return false; }
+    return true;
+  };
+
+  const toggleWishlistComprado = async (id) => {
+    let next = null;
+    setWishlistItems(prev => prev.map(i => { if (i.id !== id) return i; next = { ...i, comprado: !i.comprado }; return next; }));
+    if (GC_IS_LOCAL) return true;
+    if (!next) return false;
+    const { error: err } = await gcSupabase.from("wishlist_items").update({ comprado: next.comprado }).eq("id", id);
+    if (err) { console.error(err); setError(gcWriteErrorMsg(err, "marcar o item como comprado")); await loadData(); return false; }
+    return true;
+  };
+
   return {
-    incomeSources, incomeEntries, incomeProjections, expenseTemplates, expenseInstances, investmentSnapshots,
+    incomeSources, incomeEntries, incomeProjections, expenseTemplates, expenseInstances, investmentSnapshots, wishlistItems,
     loading, error, dismissError: () => setError(null),
     saveIncomeSource, deleteIncomeSource, saveIncomeEntry, deleteIncomeEntry, saveIncomeProjection,
     saveExpenseTemplate, deleteExpenseTemplate, saveExpenseInstance, deleteExpenseInstance, toggleExpenseInstancePago,
-    saveInvestmentSnapshot,
+    saveInvestmentSnapshot, saveWishlistItem, deleteWishlistItem, toggleWishlistComprado,
   };
 }
 
@@ -1210,6 +1278,131 @@ function GcInvestmentSnapshotForm({ initialCompetencia, snapshots, onSave, onClo
 }
 
 /* ---------------------------------------------------------------
+   TELA: LISTA DE SONHOS (Fase 4) — porte direto da wishlist do Guitchelin:
+   agrupada por categoria, com subtotal por grupo e total geral (só itens
+   ainda não comprados contam).
+----------------------------------------------------------------*/
+function GcSonhos({ items, onToggleComprado, onEdit }) {
+  const { groups, total } = gcWishlistGroups(items);
+  return (
+    <div className="gc-screen">
+      {groups.length === 0 ? (
+        <EmptyState icon={<Gift size={40} />} title="Nenhum item na lista" message="Toque no + pra adicionar algo que você quer comprar." />
+      ) : (
+        <>
+          {groups.map(g => (
+            <div className="gc-group" key={g.categoria}>
+              <div className="gc-group-header">
+                <span>{g.categoria}</span>
+                <span className="gc-money">{gcFmtMoney(g.subtotal)}</span>
+              </div>
+              <div className="gc-list">
+                {g.items.map(item => (
+                  <div className="gc-list-row" key={item.id}>
+                    <button type="button" className="gc-checkbox" onClick={() => onToggleComprado(item.id)} aria-label={`Marcar ${item.produto} como comprado`}>
+                      <Gift size={13} />
+                    </button>
+                    <button type="button" className="gc-list-row-main" onClick={() => onEdit(item)}>
+                      <span className="gc-list-row-title">{item.produto}</span>
+                      {(item.marca || item.modelo) && <span className="gc-list-row-sub">{[item.marca, item.modelo].filter(Boolean).join(" · ")}</span>}
+                    </button>
+                    <span className="gc-row-valor-display gc-money">{item.preco != null ? gcFmtMoney(item.preco) : "—"}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+          <div className="gc-list-total">
+            <span>Total</span>
+            <span className="gc-money">{gcFmtMoney(total)}</span>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function GcWishlistItemForm({ initial, onSave, onDelete, onClose }) {
+  const [categoria, setCategoria] = useState(initial ? initial.categoria : "MISC");
+  const [produto, setProduto] = useState(initial ? initial.produto : "");
+  const [marca, setMarca] = useState(initial ? initial.marca : "");
+  const [modelo, setModelo] = useState(initial ? initial.modelo : "");
+  const [link, setLink] = useState(initial ? initial.link : "");
+  const [obs, setObs] = useState(initial ? initial.obs : "");
+  const [preco, setPreco] = useState(initial && initial.preco != null ? String(initial.preco) : "");
+  const [comprado, setComprado] = useState(initial ? initial.comprado : false);
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!produto.trim()) return;
+    setBusy(true);
+    const ok = await onSave({
+      id: initial ? initial.id : uid(),
+      categoria: (categoria || "MISC").trim() || "MISC",
+      produto: produto.trim(), marca: marca.trim(), modelo: modelo.trim(), link: link.trim(), obs: obs.trim(),
+      preco: preco === "" ? null : (parseFloat(String(preco).replace(",", ".")) || 0),
+      comprado,
+    });
+    setBusy(false);
+    if (ok !== false) onClose();
+  };
+
+  return (
+    <Modal title={initial ? "Editar item" : "Novo item"} onClose={onClose} wide>
+      <form onSubmit={submit} className="lb-form-grid">
+        <Field label="Produto" wide>
+          <input value={produto} onChange={e => setProduto(e.target.value)} placeholder="Ex.: cadeira" autoFocus required />
+        </Field>
+        <Field label="Categoria">
+          <input value={categoria} onChange={e => setCategoria(e.target.value)} list="gc-wishlist-categorias" placeholder="Ex.: TECH" />
+          <datalist id="gc-wishlist-categorias">
+            {GC_WISHLIST_CATEGORIES.map(c => <option key={c} value={c} />)}
+          </datalist>
+        </Field>
+        <Field label="Preço (opcional)">
+          <input type="number" inputMode="decimal" step="0.01" value={preco} onChange={e => setPreco(e.target.value)} />
+        </Field>
+        <Field label="Marca">
+          <input value={marca} onChange={e => setMarca(e.target.value)} />
+        </Field>
+        <Field label="Modelo">
+          <input value={modelo} onChange={e => setModelo(e.target.value)} />
+        </Field>
+        <Field label="Link" wide>
+          <input value={link} onChange={e => setLink(e.target.value)} placeholder="https://..." />
+        </Field>
+        <Field label="Observação" wide>
+          <input value={obs} onChange={e => setObs(e.target.value)} />
+        </Field>
+        <Field label="Já comprei?" wide>
+          <Segmented options={[{ value: "nao", label: "Ainda não" }, { value: "sim", label: "Já comprei" }]} value={comprado ? "sim" : "nao"} onChange={v => setComprado(v === "sim")} />
+        </Field>
+        <div className="lb-form-footer">
+          <div className="lb-form-actions">
+            <div className="lb-form-actions-left">
+              {initial && (
+                <button type="button" className="lb-btn danger" onClick={async () => {
+                  if (!confirm("Excluir este item da lista?")) return;
+                  const ok = await onDelete(initial.id);
+                  if (ok !== false) onClose();
+                }}>
+                  <Trash2 size={16} /> Excluir
+                </button>
+              )}
+            </div>
+            <div className="lb-form-actions-right">
+              <button type="button" className="lb-btn ghost" onClick={onClose}>Cancelar</button>
+              <button type="submit" className="lb-btn primary" disabled={busy}>{busy ? "Salvando..." : "Salvar"}</button>
+            </div>
+          </div>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+/* ---------------------------------------------------------------
    SHELL DO APP (topbar, gaveta lateral, nav inferior + FAB contextual).
    Fase 0: telas ainda são placeholders (EmptyState) — cada uma vira de
    verdade na fase correspondente (ver CLAUDE.md > Roadmap).
@@ -1225,11 +1418,8 @@ const GC_NAV_ITEMS = [
 // Texto do FAB contextual: cada aba terá sua própria ação real nas próximas
 // fases (ex.: em Despesas -> nova despesa avulsa / nova recorrência). Por
 // ora só explica o que está por vir.
-function gcFabHint(subTab) {
-  switch (subTab) {
-    case "sonhos": return "Adicionar um item à Lista de Sonhos chega na Fase 4.";
-    default: return "As ações rápidas chegam junto com cada tela, fase a fase.";
-  }
+function gcFabHint() {
+  return "O Dashboard (big numbers, fluxo de caixa e gráficos) chega na Fase 5.";
 }
 // Competência inicial de Receitas: no modo demo, começa no último mês com
 // lançamento (mostra dado de cara); em produção, começa no mês atual.
@@ -1242,11 +1432,11 @@ function gcInitialReceitasCompetencia() {
 
 function App({ session }) {
   const {
-    incomeSources, incomeEntries, incomeProjections, expenseTemplates, expenseInstances, investmentSnapshots,
+    incomeSources, incomeEntries, incomeProjections, expenseTemplates, expenseInstances, investmentSnapshots, wishlistItems,
     loading, error, dismissError,
     saveIncomeSource, deleteIncomeSource, saveIncomeEntry, saveIncomeProjection,
     saveExpenseTemplate, deleteExpenseTemplate, saveExpenseInstance, deleteExpenseInstance, toggleExpenseInstancePago,
-    saveInvestmentSnapshot,
+    saveInvestmentSnapshot, saveWishlistItem, deleteWishlistItem, toggleWishlistComprado,
   } = useGcData(session);
   // (deleteIncomeEntry existe no hook, ainda sem UI que remova um lançamento
   // pontual — fica pra quando a tela de Receitas ganhar essa ação.)
@@ -1261,6 +1451,7 @@ function App({ session }) {
   const [instanceForm, setInstanceForm] = useState(null);
   const [templateForm, setTemplateForm] = useState(null);
   const [snapshotForm, setSnapshotForm] = useState(null);
+  const [wishlistForm, setWishlistForm] = useState(null);
   const [despesasFabMenu, setDespesasFabMenu] = useState(false);
 
   useEffect(() => {
@@ -1343,6 +1534,8 @@ function App({ session }) {
               snapshots={investmentSnapshots} competencia={investimentosComp} onCompetenciaChange={setInvestimentosComp}
               onSaveSaldo={(competencia, existingId, saldo) => saveInvestmentSnapshot({ id: existingId || uid(), competencia, saldo, observacao: "" })}
             />
+          ) : subTab === "sonhos" ? (
+            <GcSonhos items={wishlistItems} onToggleComprado={toggleWishlistComprado} onEdit={(item) => setWishlistForm({ initial: item })} />
           ) : (
             <EmptyState
               icon={current ? current.icon(40) : <BarChart3 size={40} />}
@@ -1366,9 +1559,10 @@ function App({ session }) {
               else if (subTab === "despesas") setDespesasFabMenu(true);
               else if (subTab === "recorrencias") setTemplateForm({ initial: null });
               else if (subTab === "investimentos") setSnapshotForm({ initialCompetencia: investimentosComp });
+              else if (subTab === "sonhos") setWishlistForm({ initial: null });
               else setFabInfo(true);
             }}
-            aria-label={subTab === "receitas" ? "Nova fonte de receita" : subTab === "despesas" ? "Nova despesa" : subTab === "recorrencias" ? "Nova recorrência" : subTab === "investimentos" ? "Registrar saldo" : "Adicionar"}>
+            aria-label={subTab === "receitas" ? "Nova fonte de receita" : subTab === "despesas" ? "Nova despesa" : subTab === "recorrencias" ? "Nova recorrência" : subTab === "investimentos" ? "Registrar saldo" : subTab === "sonhos" ? "Novo item" : "Adicionar"}>
             <Plus size={26} />
           </button>
           <button type="button" className={"gc-navbtn" + (subTab === "despesas" ? " active" : "")} onClick={() => setSubTab("despesas")}>
@@ -1409,6 +1603,9 @@ function App({ session }) {
         )}
         {snapshotForm && (
           <GcInvestmentSnapshotForm initialCompetencia={snapshotForm.initialCompetencia} snapshots={investmentSnapshots} onSave={saveInvestmentSnapshot} onClose={() => setSnapshotForm(null)} />
+        )}
+        {wishlistForm && (
+          <GcWishlistItemForm initial={wishlistForm.initial} onSave={saveWishlistItem} onDelete={deleteWishlistItem} onClose={() => setWishlistForm(null)} />
         )}
       </div>
     </>
