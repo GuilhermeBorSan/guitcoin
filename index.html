@@ -1563,12 +1563,6 @@ const GC_NAV_ITEMS = [
   { value: "investimentos", label: "Investimentos", icon: (s) => <TrendingUp size={s} />, group: "Financeiro" },
   { value: "sonhos", label: "Lista de Sonhos", icon: (s) => <Gift size={s} />, group: "Listas" },
 ];
-// Texto do FAB contextual: cada aba terá sua própria ação real nas próximas
-// fases (ex.: em Despesas -> nova despesa avulsa / nova recorrência). Por
-// ora só explica o que está por vir.
-function gcFabHint() {
-  return "O Dashboard (big numbers, fluxo de caixa e gráficos) chega na Fase 5.";
-}
 // Competência inicial de Receitas: no modo demo, começa no último mês com
 // lançamento (mostra dado de cara); em produção, começa no mês atual.
 function gcInitialReceitasCompetencia() {
@@ -1590,7 +1584,6 @@ function App({ session }) {
   // pontual — fica pra quando a tela de Receitas ganhar essa ação.)
   const [subTab, setSubTab] = useState("dashboard");
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [fabInfo, setFabInfo] = useState(false);
   const [receitasComp, setReceitasComp] = useState(gcInitialReceitasCompetencia);
   const [despesasComp, setDespesasComp] = useState(competenciaAtual);
   const [investimentosComp, setInvestimentosComp] = useState(competenciaAtual);
@@ -1602,6 +1595,7 @@ function App({ session }) {
   const [snapshotForm, setSnapshotForm] = useState(null);
   const [wishlistForm, setWishlistForm] = useState(null);
   const [despesasFabMenu, setDespesasFabMenu] = useState(false);
+  const [dashboardFabMenu, setDashboardFabMenu] = useState(false);
 
   useEffect(() => {
     if (!sidebarOpen) return;
@@ -1705,14 +1699,14 @@ function App({ session }) {
           </button>
           <button type="button" className="gc-navfab"
             onClick={() => {
-              if (subTab === "receitas") setSourceForm({ initial: null });
+              if (subTab === "dashboard") setDashboardFabMenu(true);
+              else if (subTab === "receitas") setSourceForm({ initial: null });
               else if (subTab === "despesas") setDespesasFabMenu(true);
               else if (subTab === "recorrencias") setTemplateForm({ initial: null });
               else if (subTab === "investimentos") setSnapshotForm({ initialCompetencia: investimentosComp });
               else if (subTab === "sonhos") setWishlistForm({ initial: null });
-              else setFabInfo(true);
             }}
-            aria-label={subTab === "receitas" ? "Nova fonte de receita" : subTab === "despesas" ? "Nova despesa" : subTab === "recorrencias" ? "Nova recorrência" : subTab === "investimentos" ? "Registrar saldo" : subTab === "sonhos" ? "Novo item" : "Adicionar"}>
+            aria-label={subTab === "dashboard" ? "Adicionar" : subTab === "receitas" ? "Nova fonte de receita" : subTab === "despesas" ? "Nova despesa" : subTab === "recorrencias" ? "Nova recorrência" : subTab === "investimentos" ? "Registrar saldo" : subTab === "sonhos" ? "Novo item" : "Adicionar"}>
             <Plus size={26} />
           </button>
           <button type="button" className={"gc-navbtn" + (subTab === "despesas" ? " active" : "")} onClick={() => setSubTab("despesas")}>
@@ -1720,16 +1714,25 @@ function App({ session }) {
           </button>
         </nav>
 
-        {fabInfo && (
-          <Modal title="Em construção" onClose={() => setFabInfo(false)}>
-            <p className="lb-hint">{gcFabHint(subTab)}</p>
-          </Modal>
-        )}
         {sourceForm && (
           <GcIncomeSourceForm initial={sourceForm.initial} onSave={saveIncomeSource} onDelete={deleteIncomeSource} onClose={() => setSourceForm(null)} />
         )}
         {projectionForm && (
           <GcIncomeProjectionForm ano={projectionForm.ano} initial={projectionForm.initial} onSave={saveIncomeProjection} onClose={() => setProjectionForm(null)} />
+        )}
+        {dashboardFabMenu && (
+          <Modal title="O que você quer registrar?" onClose={() => setDashboardFabMenu(false)}>
+            <div className="gc-fab-menu">
+              <button type="button" className="gc-fab-option" onClick={() => { setDashboardFabMenu(false); setSourceForm({ initial: null }); }}>
+                <TrendingUp size={22} />
+                <span className="gc-fab-option-txt"><strong>Nova fonte de receita</strong><small>Salário, extra ou outra fonte fixa</small></span>
+              </button>
+              <button type="button" className="gc-fab-option" onClick={() => { setDashboardFabMenu(false); setSnapshotForm({ initialCompetencia: investimentosComp }); }}>
+                <BarChart3 size={22} />
+                <span className="gc-fab-option-txt"><strong>Novo saldo de investimento</strong><small>Atualiza o Saldo em Caixa deste mês</small></span>
+              </button>
+            </div>
+          </Modal>
         )}
         {despesasFabMenu && (
           <Modal title="O que você quer lançar?" onClose={() => setDespesasFabMenu(false)}>
