@@ -542,6 +542,46 @@ async function gcUpdateFields(session, colecao, id, fields) {
   await gcCollectionRef(session, colecao).doc(id).update(fields);
 }
 
+// ---- Fila de toggles pendentes em localStorage: reforço específico pro
+// checkbox de "pago"/"comprado", que o usuário costuma tocar e fechar o app
+// na sequência (ver relato: "marquei checkbox e ao reabrir a marcação
+// sumiu"). O enablePersistence do Firestore (IndexedDB) já cobre a maioria
+// dos casos, mas grava a fila de escritas pendentes de forma assíncrona —
+// se o app for morto rápido demais (troca de app no celular, aba fechada),
+// a escrita pode nunca chegar a ser enfileirada a tempo. localStorage é
+// síncrono: o valor já está em disco antes do clique terminar de
+// processar, sobrevivendo mesmo nesse caso extremo. Reaplicado sobre os
+// dados recém-carregados e reenviado a cada loadData(), só saindo da fila
+// quando o reenvio é confirmado. ----
+const GC_PENDING_TOGGLES_KEY = "gc_pending_toggles_v1";
+function gcReadPendingToggles() {
+  try { return JSON.parse(localStorage.getItem(GC_PENDING_TOGGLES_KEY) || "[]"); }
+  catch { return []; }
+}
+function gcWritePendingToggles(list) {
+  try { localStorage.setItem(GC_PENDING_TOGGLES_KEY, JSON.stringify(list)); } catch {}
+}
+function gcQueuePendingToggle(colecao, id, field, value) {
+  const list = gcReadPendingToggles().filter(p => !(p.colecao === colecao && p.id === id && p.field === field));
+  list.push({ colecao, id, field, value });
+  gcWritePendingToggles(list);
+}
+function gcClearPendingToggle(colecao, id, field) {
+  gcWritePendingToggles(gcReadPendingToggles().filter(p => !(p.colecao === colecao && p.id === id && p.field === field)));
+}
+async function gcFlushPendingToggles(session, colecoes) {
+  const pendentes = gcReadPendingToggles();
+  if (!pendentes.length) return colecoes;
+  const resultado = { ...colecoes };
+  for (const p of pendentes) {
+    const lista = resultado[p.colecao];
+    if (lista) resultado[p.colecao] = lista.map(item => item.id === p.id ? { ...item, [p.field]: p.value } : item);
+    try { await gcUpdateFields(session, p.colecao, p.id, { [p.field]: p.value }); gcClearPendingToggle(p.colecao, p.id, p.field); }
+    catch (err) { console.error(err); }
+  }
+  return resultado;
+}
+
 // ---- Demo local (GC_IS_LOCAL): dados fictícios pra abrir o app sem
 // Firebase, com os números reais da planilha original (WriteChoice/
 // Cambridge, Jan–Jul/2026). ----
@@ -686,14 +726,18 @@ function useGcData(session) {
           console.error(genErr);
         }
       }
+      // Reaplica (e reenvia) qualquer toggle de "pago"/"comprado" que ficou
+      // pendente em localStorage de uma sessão anterior fechada rápido
+      // demais pro Firestore ter recebido a escrita (ver gcFlushPendingToggles).
+      const reconciliado = await gcFlushPendingToggles(session, { expense_instances: instances, wishlist_items: wishlist });
       setExpenseCategories(categoriasFinais);
       setIncomeSources(sources);
       setIncomeEntries(entries);
       setIncomeProjections(projections);
       setExpenseTemplates(templates);
-      setExpenseInstances(instances);
+      setExpenseInstances(reconciliado.expense_instances);
       setInvestmentSnapshots(snapshots);
-      setWishlistItems(wishlist);
+      setWishlistItems(reconciliado.wishlist_items);
       setWishlistSavingsSnapshots(wishSavings);
     } catch (err) {
       console.error(err);
@@ -814,8 +858,12 @@ function useGcData(session) {
     setExpenseInstances(prev => prev.map(i => { if (i.id !== id) return i; next = { ...i, pago: !i.pago }; return next; }));
     if (GC_IS_LOCAL) return true;
     if (!next) return false;
-    try { await gcUpdateFields(session, "expense_instances", id, { pago: next.pago }); return true; }
-    catch (err) { console.error(err); setError(gcWriteErrorMsg(err, "marcar a despesa como paga")); await loadData(); return false; }
+    gcQueuePendingToggle("expense_instances", id, "pago", next.pago);
+    try {
+      await gcUpdateFields(session, "expense_instances", id, { pago: next.pago });
+      gcClearPendingToggle("expense_instances", id, "pago");
+      return true;
+    } catch (err) { console.error(err); setError(gcWriteErrorMsg(err, "marcar a despesa como paga")); await loadData(); return false; }
   };
 
   const saveInvestmentSnapshot = async (snapshot) => {
@@ -844,8 +892,12 @@ function useGcData(session) {
     setWishlistItems(prev => prev.map(i => { if (i.id !== id) return i; next = { ...i, comprado: !i.comprado }; return next; }));
     if (GC_IS_LOCAL) return true;
     if (!next) return false;
-    try { await gcUpdateFields(session, "wishlist_items", id, { comprado: next.comprado }); return true; }
-    catch (err) { console.error(err); setError(gcWriteErrorMsg(err, "marcar o item como comprado")); await loadData(); return false; }
+    gcQueuePendingToggle("wishlist_items", id, "comprado", next.comprado);
+    try {
+      await gcUpdateFields(session, "wishlist_items", id, { comprado: next.comprado });
+      gcClearPendingToggle("wishlist_items", id, "comprado");
+      return true;
+    } catch (err) { console.error(err); setError(gcWriteErrorMsg(err, "marcar o item como comprado")); await loadData(); return false; }
   };
 
   const saveWishlistSavingsSnapshot = async (snapshot) => {
