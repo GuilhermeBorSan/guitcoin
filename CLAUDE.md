@@ -104,6 +104,24 @@ snake_case) estão todas implementadas: `income_sources`/`income_entries`/
 - `wishlist_items` — Lista de Sonhos: `categoria` (texto livre, seed
   `CASA/LUNA/VESTUÁRIO/TECH/CARE/MISC`), `produto`, `marca`, `modelo`,
   `link`, `obs`, `preco`, `comprado`.
+- `trips` — uma viagem: `nome`, `destino`, `dataInicio`/`dataFim`
+  (opcionais, só exibição), `numDias` (quantas colunas "Dia N" a viagem
+  tem, além do "Pré-viagem"), `participantes` (array embutido, não
+  subcoleção: `{id, nome, cor, disponivel}` — `disponivel` é o orçamento
+  daquela pessoa, mesmo papel do bloco colorido "Disponível" no topo da
+  planilha original), `arquivada`, `ordem`.
+- `trip_expenses` — um gasto de uma viagem: `tripId`, `categoria` (texto
+  livre, mesmo espírito de `wishlist_items.categoria` — sem CRUD/coleção
+  própria, sugestões vêm de `GC_TRIP_EXPENSE_CATEGORIES` + categorias já
+  usadas na viagem), `descricao`, `dia` (`-1` = Pré-viagem, `0..numDias-1`
+  = Dia N — mesmas colunas da planilha "Gastos_BA_ARRCAR_2024" usada de
+  referência), `valor`, `pagoPorId` (id de um item de `participantes`).
+  **Divisão "quem pagou vs quem deve"**: cada participante deve uma parte
+  igual do total da viagem (`gcTripSaldos`); saldo = pago − parte justa.
+  `gcTripAcertos` simplifica isso num número mínimo de transferências
+  (maior devedor acerta com o maior credor). Adaptação móvel da planilha:
+  o "dia" é um seletor na tela (como o mês em Despesas), não uma coluna de
+  grid — não cabe uma matriz categoria×dia na largura de um iPhone.
 
 **Geração de instância recorrente é lazy, no carregamento dos dados**:
 `gcGenerateMissingInstances(templates, instances, competenciaAtual)` calcula
@@ -194,6 +212,15 @@ reajuste de preço, ex. Disney+ subindo mês a mês).
   `gcCustoDeVidaAnual`/`gcTaxaDePoupanca`/`gcMediaMensalDeGastos`/
   `gcInvestimentosPorMes`. **Todas as 6 fases do plano de estruturação estão
   completas.**
+- ~~Viagens (fora do plano original — pedido novo, baseado na planilha
+  "Gastos_BA_ARRCAR_2024")~~ ✅ feito: `GcViagens` (lista de viagens) +
+  `GcViagemDetalhe` (statcards Total da viagem/Total do dia, cards de
+  participante com orçamento "Disponível" + saldo a receber/deve, seção
+  "Acertos" com a divida simplificada, seletor de dia tipo Despesas, lista
+  agrupada por categoria), `GcTripForm` (participantes dinâmicos com
+  cor+orçamento), `GcTripExpenseForm`. Coleções `trips`/`trip_expenses` (ver
+  Modelo de dados). Excluir uma viagem apaga os gastos dela junto (única
+  coleção do app com esse comportamento — as outras só orfanizam).
 
 ## Próximos passos (pós-plano original, sugestões — confirmar com o Gui)
 - Editar/excluir um lançamento de receita específico (`deleteIncomeEntry` já
@@ -292,10 +319,25 @@ Firebase ser criado).
   (rótulo da linha deve ficar fixo/sticky enquanto os meses rolam
   horizontalmente) e confirme que "Investimentos" também carrega o saldo
   adiante ali. Troque o ano com as setas.
+
+- **Viagens**: abra Viagens pela gaveta — deve listar "Bahia — Arraial" com
+  o total gasto da viagem (R$4.020,00 em modo demo). Toque pra abrir: os
+  cards de participante devem mostrar Gui e Bruno com "Disponível"
+  (R$2.000/R$1.800) e o saldo — Bruno pagou passagem de volta + jantar +
+  buggy, Gui pagou passagem de ida + hospedagem + táxi + almoço; confirme
+  que "Acertos" mostra uma transferência simplificada (não uma por gasto)
+  entre os dois. Navegue os dias com as setas (Pré-viagem → Dia 0 → Dia 1
+  → ...) e confirme que os gastos aparecem agrupados por categoria só no
+  dia certo. Toque no + com a viagem aberta (deve abrir "Novo gasto", com
+  o dia pré-selecionado no dia que você estava vendo) e no + na lista de
+  viagens (deve abrir "Nova viagem", com editor de participantes
+  dinâmico — nome, cor, orçamento). Edite a viagem (lápis no cabeçalho) e
+  confirme que dá pra adicionar/remover participante.
+
 - **Persistência (todas as fases)**: depois que o projeto Firebase for
   criado (ver Roadmap), recarregue a página inteira e confirme que tudo
   sobrevive — teste definitivo de que o ciclo load/upsert do `useGcData`
-  está certo pras 7 coleções. Confira também que a regra de
+  está certo pras 9 coleções. Confira também que a regra de
   `firestore.rules` está publicada (sem ela, toda leitura/escrita retorna
   "Missing or insufficient permissions" e `gcWriteErrorMsg` deveria
   traduzir isso pro banner pt-BR de sessão expirada).
