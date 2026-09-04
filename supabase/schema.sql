@@ -8,8 +8,7 @@
 -- Cada tabela ganha 4 políticas de RLS (select/insert/update/delete), todas
 -- `using/with check (user_id = auth.uid())`.
 --
--- Fases seguintes (ainda sem tabela): Fase 2 — expense_templates,
--- expense_instances (Despesas + Recorrências); Fase 3 — investment_snapshots
+-- Fases seguintes (ainda sem tabela): Fase 3 — investment_snapshots
 -- (Investimentos); Fase 4 — wishlist_items (Lista de Sonhos).
 
 -- ===================== Fase 1: Receitas =====================
@@ -77,9 +76,69 @@ create policy "income_projections_update_own" on public.income_projections
 create policy "income_projections_delete_own" on public.income_projections
   for delete using (user_id = auth.uid());
 
+-- ================ Fase 2: Despesas + Recorrências ================
+
+create table if not exists public.expense_templates (
+  id text primary key,
+  user_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  nome text not null,
+  grupo text not null default 'pix', -- 'casa' | 'pessoal' | 'pix' | 'cartao_fixo'
+  frequencia text not null default 'mensal', -- 'mensal' | 'anual'
+  mes_cobranca int, -- 1-12, só usado quando frequencia = 'anual'
+  dia_vencimento int,
+  valor_padrao numeric not null default 0,
+  compartilhado boolean not null default false,
+  compartilhado_com text,
+  minha_parcela_pct numeric not null default 100, -- 0-100, minha parte da conta
+  ativo boolean not null default true,
+  data_inicio text not null, -- "YYYY-MM", primeiro mês a gerar
+  data_fim text, -- "YYYY-MM" ou null (sem data de fim/pausa)
+  observacao text,
+  created_at text,
+  inserted_at timestamptz not null default now()
+);
+
+alter table public.expense_templates enable row level security;
+
+create policy "expense_templates_select_own" on public.expense_templates
+  for select using (user_id = auth.uid());
+create policy "expense_templates_insert_own" on public.expense_templates
+  for insert with check (user_id = auth.uid());
+create policy "expense_templates_update_own" on public.expense_templates
+  for update using (user_id = auth.uid());
+create policy "expense_templates_delete_own" on public.expense_templates
+  for delete using (user_id = auth.uid());
+
+create table if not exists public.expense_instances (
+  id text primary key,
+  user_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  template_id text references public.expense_templates(id) on delete set null,
+  grupo text not null default 'compras', -- 'casa'|'pessoal'|'pix'|'cartao_fixo'|'compras'
+  descricao text not null,
+  competencia text not null, -- "YYYY-MM"
+  valor numeric not null default 0,
+  pago boolean not null default false,
+  compartilhado boolean not null default false,
+  compartilhado_com text,
+  minha_parcela_pct numeric not null default 100,
+  created_at text,
+  inserted_at timestamptz not null default now()
+);
+
+alter table public.expense_instances enable row level security;
+
+create policy "expense_instances_select_own" on public.expense_instances
+  for select using (user_id = auth.uid());
+create policy "expense_instances_insert_own" on public.expense_instances
+  for insert with check (user_id = auth.uid());
+create policy "expense_instances_update_own" on public.expense_instances
+  for update using (user_id = auth.uid());
+create policy "expense_instances_delete_own" on public.expense_instances
+  for delete using (user_id = auth.uid());
+
 -- Convenção de migração: toda vez que um campo novo for adicionado a um
 -- objeto no index.html, adiciona a coluna aqui via `create table if not
 -- exists` (instalações novas) E deixa uma linha `alter table ... add column
 -- if not exists ...;` comentada logo abaixo, pra rodar uma vez no SQL Editor
 -- em instalações existentes. Última coluna adicionada: nenhuma ainda desde o
--- schema inicial da Fase 1.
+-- schema inicial da Fase 2.

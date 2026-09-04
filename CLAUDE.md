@@ -49,7 +49,8 @@ completo de estruturação em `C:\Users\gui30\.claude\plans\c-users-gui30-downlo
 
 ## Modelo de dados
 Sete tabelas normalizadas (`income_sources`/`income_entries`/
-`income_projections` já implementadas na Fase 1; as outras quatro entram nas
+`income_projections` da Fase 1 e `expense_templates`/`expense_instances` da
+Fase 2 já implementadas; `investment_snapshots` e `wishlist_items` entram nas
 próximas fases — ver Roadmap):
 - `income_sources` — fontes de renda: `nome`, `tipo` (`work`|`extra`),
   `ativo`, `ordem`.
@@ -132,7 +133,12 @@ reajuste de preço, ex. Disney+ subindo mês a mês).
 - ~~Fase 1 — Receitas (tabelas + tela)~~ ✅ feito: `GcReceitas` (cards de
   projeção + seletor de mês + grid por fonte), `GcIncomeSourceForm`,
   `GcIncomeProjectionForm`.
-- Fase 2 — Despesas + Recorrências (núcleo de uso diário do app).
+- ~~Fase 2 — Despesas + Recorrências~~ ✅ feito: `GcDespesas` (lista
+  agrupada por categoria + checkbox de pago inline + statcards "Total
+  lançado"/"Meu custo"), `GcRecorrencias` (CRUD de templates),
+  `GcExpenseInstanceForm`, `GcExpenseTemplateForm`, motor
+  `gcGenerateMissingInstances` (geração lazy até o mês atual, mensal ou
+  anual, respeitando pausa/data-fim).
 - Fase 3 — Investimentos.
 - Fase 4 — Lista de Sonhos.
 - Fase 5 — Dashboard + Análises (big numbers, fluxo de caixa, gráficos);
@@ -148,8 +154,8 @@ Sem etapa de build, o write manda todas as colunas — coluna nova no objeto
 exige coluna nova na tabela ANTES de publicar, senão o upsert falha. O
 `schema.sql` guarda cada `alter table ... add column if not exists ...`
 comentado; rodar a linha uma vez no SQL Editor. Última coluna adicionada:
-nenhuma ainda desde o schema inicial da Fase 1 (`income_sources`/
-`income_entries`/`income_projections` já nasceram com todas as colunas).
+nenhuma ainda desde o schema inicial da Fase 2 (`expense_templates`/
+`expense_instances` já nasceram com todas as colunas).
 
 ## Como verificar mudanças
 Abra o `index.html` no navegador — entra direto em modo demo local
@@ -172,11 +178,26 @@ ser provisionado).
   `renda_fixa_mensal_esperada`, e toque no FAB pra cadastrar uma fonte nova
   (Fixa ou Extra) — deve aparecer na lista imediatamente.
 
-A partir da Fase 2, cada fase acrescenta seu próprio roteiro de verificação
-(ver a seção "Verification Plan" do plano de estruturação) — geração
-automática de recorrência, marcar despesa dividida e confirmar que não entra
-no Custo de Vida, recarregar e confirmar persistência via Supabase (depois
-que o projeto for provisionado).
+- **Despesas + Recorrências (Fase 2)**: abra Recorrências pela gaveta —
+  deve listar as 17 recorrências de demo (Casa/Pessoal/PIX/Cartão fixo),
+  mostrando "Anual · <mês>" pras assinaturas anuais (PSN/Nintendo Online em
+  Jan, Google One em Jul, TickTick em Out), "pausada" na Cerâmica (parou em
+  Jul/2026) e "0% minha parte" nas 4 contas de Casa (CAESB/NEOENERGIA/
+  SuperGás/Internet, divididas com o Bruno). Abra Despesas — o mês atual já
+  deve ter as instâncias geradas sozinhas pra cada recorrência ativa
+  (confirme que a Cerâmica NÃO aparece mais e que nenhuma anual fora do seu
+  mês aparece); confirme que "Total lançado" soma tudo mas "Meu custo (após
+  divisão)" é menor exatamente pelo valor das 4 contas do Bruno. Marque uma
+  despesa como paga (checkbox inline, sem abrir modal) e confirme que
+  persiste ao trocar de mês e voltar. Toque numa linha pra abrir o formulário
+  de edição (confirme os campos de divisão pré-preenchidos) e no FAB em
+  Despesas (deve abrir um menu com "Despesa avulsa" e "Nova recorrência") e
+  em Recorrências (deve abrir direto o formulário de nova recorrência, com o
+  campo "Mês de cobrança" aparecendo só quando a frequência é Anual).
+
+A partir da Fase 3, cada fase acrescenta seu próprio roteiro de verificação
+(ver a seção "Verification Plan" do plano de estruturação) — recarregar e
+confirmar persistência via Supabase (depois que o projeto for provisionado).
 
 ## Convenções de trabalho
 - Responder e escrever UI sempre em pt-BR.

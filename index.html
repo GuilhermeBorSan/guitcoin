@@ -140,6 +140,82 @@ function gcRendaFixaAnualGarantida(projection) {
 function gcProjecaoTotalAno(rendaFixaAnual, extraAcumuladoYTD) {
   return rendaFixaAnual + extraAcumuladoYTD;
 }
+
+// ---- Fórmulas de Despesas/Recorrência (funções puras) ----
+const GC_EXPENSE_GROUPS = [
+  { value: "casa", label: "Casa" },
+  { value: "pessoal", label: "Pessoal" },
+  { value: "pix", label: "PIX" },
+  { value: "cartao_fixo", label: "Cartão fixo" },
+  { value: "compras", label: "Compras" },
+];
+function gcExpenseGroupLabel(grupo) {
+  return (GC_EXPENSE_GROUPS.find(g => g.value === grupo) || {}).label || grupo;
+}
+// Custo de vida de UMA instância: a parte que é minha de verdade. Uma conta
+// dividida com terceiro (minhaParcelaPct = 0) some do custo de vida sem
+// deixar de existir/aparecer com seu checkbox de "pago".
+function gcCustoInstance(instance) {
+  const pct = instance.minhaParcelaPct != null ? instance.minhaParcelaPct : 100;
+  return (instance.valor || 0) * pct / 100;
+}
+function gcInstancesForCompetencia(instances, competencia) {
+  return instances.filter(i => i.competencia === competencia);
+}
+function gcMonthInstancesTotal(instances, competencia) {
+  return gcInstancesForCompetencia(instances, competencia).reduce((s, i) => s + (i.valor || 0), 0);
+}
+function gcCustoMes(instances, competencia) {
+  return gcInstancesForCompetencia(instances, competencia).reduce((s, i) => s + gcCustoInstance(i), 0);
+}
+function gcGroupInstances(instances, competencia) {
+  const doMes = gcInstancesForCompetencia(instances, competencia);
+  return GC_EXPENSE_GROUPS
+    .map(g => {
+      const items = doMes.filter(i => i.grupo === g.value).sort((a, b) => (a.descricao || "").localeCompare(b.descricao || ""));
+      return { ...g, items, total: items.reduce((s, i) => s + (i.valor || 0), 0) };
+    })
+    .filter(g => g.items.length > 0);
+}
+// Uma instância nova gerada a partir de um template (ainda sem id salvo).
+function gcNovaInstanciaDeTemplate(t, competencia) {
+  return {
+    id: uid(), templateId: t.id, grupo: t.grupo, descricao: t.nome, competencia,
+    valor: t.valorPadrao || 0, pago: false,
+    compartilhado: !!t.compartilhado, compartilhadoCom: t.compartilhadoCom || "",
+    minhaParcelaPct: t.minhaParcelaPct != null ? t.minhaParcelaPct : 100,
+  };
+}
+// Geração LAZY das instâncias que faltam, até `competenciaLimite` (nunca
+// adianta meses futuros — ver CLAUDE.md/plano). Mensal: todo mês entre
+// data_inicio e min(competenciaLimite, data_fim). Anual: só o mês
+// mes_cobranca do ano de competenciaLimite.
+function gcGenerateMissingInstances(templates, instances, competenciaLimite) {
+  const existentes = new Set(instances.map(i => (i.templateId || "") + "|" + i.competencia));
+  const novas = [];
+  for (const t of templates) {
+    if (t.ativo === false || !t.dataInicio) continue;
+    if (t.frequencia === "anual") {
+      const ano = competenciaLimite.slice(0, 4);
+      const comp = `${ano}-${String(t.mesCobranca || 1).padStart(2, "0")}`;
+      if (comp > competenciaLimite || comp < t.dataInicio) continue;
+      if (t.dataFim && comp > t.dataFim) continue;
+      const key = t.id + "|" + comp;
+      if (!existentes.has(key)) { novas.push(gcNovaInstanciaDeTemplate(t, comp)); existentes.add(key); }
+    } else {
+      const fim = t.dataFim && t.dataFim < competenciaLimite ? t.dataFim : competenciaLimite;
+      let comp = t.dataInicio;
+      let guard = 0;
+      while (comp <= fim && guard < 600) {
+        const key = t.id + "|" + comp;
+        if (!existentes.has(key)) { novas.push(gcNovaInstanciaDeTemplate(t, comp)); existentes.add(key); }
+        comp = gcShiftCompetencia(comp, 1);
+        guard++;
+      }
+    }
+  }
+  return novas;
+}
 // Preview local: localhost entra direto no app com dados fictícios, sem
 // gravar no Supabase de produção. Em guitcoin.vercel.app isso fica off.
 const GC_IS_LOCAL = ["localhost", "127.0.0.1"].includes(location.hostname);
@@ -211,6 +287,36 @@ const gcRowToIncomeEntry = (row) => ({ id: row.id, sourceId: row.source_id, comp
 const gcIncomeEntryToRow = (e) => ({ id: e.id, source_id: e.sourceId, competencia: e.competencia, valor: e.valor || 0 });
 const gcRowToIncomeProjection = (row) => ({ id: row.id, ano: String(row.ano), rendaFixaMensalEsperada: Number(row.renda_fixa_mensal_esperada) || 0 });
 const gcIncomeProjectionToRow = (p) => ({ id: p.id, ano: Number(p.ano), renda_fixa_mensal_esperada: p.rendaFixaMensalEsperada || 0 });
+const gcRowToExpenseTemplate = (row) => ({
+  id: row.id, nome: row.nome, grupo: row.grupo, frequencia: row.frequencia || "mensal",
+  mesCobranca: row.mes_cobranca || null, diaVencimento: row.dia_vencimento || null,
+  valorPadrao: Number(row.valor_padrao) || 0, compartilhado: !!row.compartilhado,
+  compartilhadoCom: row.compartilhado_com || "",
+  minhaParcelaPct: row.minha_parcela_pct != null ? Number(row.minha_parcela_pct) : 100,
+  ativo: row.ativo !== false, dataInicio: row.data_inicio, dataFim: row.data_fim || null,
+  observacao: row.observacao || "",
+});
+const gcExpenseTemplateToRow = (t) => ({
+  id: t.id, nome: t.nome, grupo: t.grupo, frequencia: t.frequencia || "mensal",
+  mes_cobranca: t.mesCobranca || null, dia_vencimento: t.diaVencimento || null,
+  valor_padrao: t.valorPadrao || 0, compartilhado: !!t.compartilhado,
+  compartilhado_com: t.compartilhadoCom || null,
+  minha_parcela_pct: t.minhaParcelaPct != null ? t.minhaParcelaPct : 100,
+  ativo: t.ativo !== false, data_inicio: t.dataInicio, data_fim: t.dataFim || null,
+  observacao: t.observacao || null,
+});
+const gcRowToExpenseInstance = (row) => ({
+  id: row.id, templateId: row.template_id || null, grupo: row.grupo, descricao: row.descricao,
+  competencia: row.competencia, valor: Number(row.valor) || 0, pago: !!row.pago,
+  compartilhado: !!row.compartilhado, compartilhadoCom: row.compartilhado_com || "",
+  minhaParcelaPct: row.minha_parcela_pct != null ? Number(row.minha_parcela_pct) : 100,
+});
+const gcExpenseInstanceToRow = (i) => ({
+  id: i.id, template_id: i.templateId || null, grupo: i.grupo, descricao: i.descricao,
+  competencia: i.competencia, valor: i.valor || 0, pago: !!i.pago,
+  compartilhado: !!i.compartilhado, compartilhado_com: i.compartilhadoCom || null,
+  minha_parcela_pct: i.minhaParcelaPct != null ? i.minhaParcelaPct : 100,
+});
 
 // ---- Demo local (GC_IS_LOCAL): dados fictícios pra abrir o app sem
 // Supabase, com os números reais da planilha original (WriteChoice/
@@ -233,6 +339,34 @@ const GC_DEMO_DATA = {
   incomeProjections: [
     { id: "demo-proj-2026", ano: "2026", rendaFixaMensalEsperada: 4800 },
   ],
+  // Recorrências: cobrem os 4 casos reais da planilha — mensal comum, mensal
+  // dividido com terceiro (as 4 contas de Casa, minhaParcelaPct 0 = não
+  // pesam no meu custo de vida), mensal com data de fim (Cerâmica parou em
+  // julho) e anual (assinaturas cobradas 1x/ano num mês fixo).
+  expenseTemplates: [
+    { id: "demo-tpl-caesb", nome: "CAESB", grupo: "casa", frequencia: "mensal", valorPadrao: 120, compartilhado: true, compartilhadoCom: "Bruno", minhaParcelaPct: 0, ativo: true, dataInicio: "2026-01", dataFim: null },
+    { id: "demo-tpl-neoenergia", nome: "NEOENERGIA", grupo: "casa", frequencia: "mensal", valorPadrao: 210, compartilhado: true, compartilhadoCom: "Bruno", minhaParcelaPct: 0, ativo: true, dataInicio: "2026-01", dataFim: null },
+    { id: "demo-tpl-supergas", nome: "SuperGás", grupo: "casa", frequencia: "mensal", valorPadrao: 90, compartilhado: true, compartilhadoCom: "Bruno", minhaParcelaPct: 0, ativo: true, dataInicio: "2026-01", dataFim: null },
+    { id: "demo-tpl-internet", nome: "Internet", grupo: "casa", frequencia: "mensal", valorPadrao: 130, compartilhado: true, compartilhadoCom: "Bruno", minhaParcelaPct: 0, ativo: true, dataInicio: "2026-01", dataFim: null },
+    { id: "demo-tpl-cartao", nome: "Cartão de crédito", grupo: "pessoal", frequencia: "mensal", valorPadrao: 550, compartilhado: false, minhaParcelaPct: 100, ativo: true, dataInicio: "2026-01", dataFim: null },
+    { id: "demo-tpl-psicologa", nome: "Psicóloga", grupo: "pix", frequencia: "mensal", valorPadrao: 520, compartilhado: false, minhaParcelaPct: 100, ativo: true, dataInicio: "2026-01", dataFim: null },
+    { id: "demo-tpl-plano-saude", nome: "Plano de Saúde", grupo: "pix", frequencia: "mensal", valorPadrao: 620, compartilhado: false, minhaParcelaPct: 100, ativo: true, dataInicio: "2026-01", dataFim: null },
+    { id: "demo-tpl-mei", nome: "MEI", grupo: "pix", frequencia: "mensal", valorPadrao: 86.05, compartilhado: false, minhaParcelaPct: 100, ativo: true, dataInicio: "2026-01", dataFim: null },
+    { id: "demo-tpl-ceramica", nome: "Cerâmica", grupo: "pix", frequencia: "mensal", valorPadrao: 500, compartilhado: false, minhaParcelaPct: 100, ativo: true, dataInicio: "2026-01", dataFim: "2026-07" },
+    { id: "demo-tpl-apple-one", nome: "Apple One", grupo: "cartao_fixo", frequencia: "mensal", valorPadrao: 42.90, compartilhado: false, minhaParcelaPct: 100, ativo: true, dataInicio: "2026-01", dataFim: null },
+    { id: "demo-tpl-icloud", nome: "iCloud+", grupo: "cartao_fixo", frequencia: "mensal", valorPadrao: 5.90, compartilhado: false, minhaParcelaPct: 100, ativo: true, dataInicio: "2026-01", dataFim: null },
+    { id: "demo-tpl-youtube", nome: "Youtube Premium", grupo: "cartao_fixo", frequencia: "mensal", valorPadrao: 53.90, compartilhado: false, minhaParcelaPct: 100, ativo: true, dataInicio: "2026-01", dataFim: null },
+    { id: "demo-tpl-disney", nome: "Disney+", grupo: "cartao_fixo", frequencia: "mensal", valorPadrao: 66.90, compartilhado: false, minhaParcelaPct: 100, ativo: true, dataInicio: "2026-01", dataFim: null },
+    { id: "demo-tpl-psn", nome: "PSN", grupo: "cartao_fixo", frequencia: "anual", mesCobranca: 1, valorPadrao: 566.04, compartilhado: false, minhaParcelaPct: 100, ativo: true, dataInicio: "2026-01", dataFim: null },
+    { id: "demo-tpl-nintendo", nome: "Nintendo Online", grupo: "cartao_fixo", frequencia: "anual", mesCobranca: 1, valorPadrao: 299.00, compartilhado: false, minhaParcelaPct: 100, ativo: true, dataInicio: "2026-01", dataFim: null },
+    { id: "demo-tpl-googleone", nome: "Google One", grupo: "cartao_fixo", frequencia: "anual", mesCobranca: 7, valorPadrao: 45.00, compartilhado: false, minhaParcelaPct: 100, ativo: true, dataInicio: "2026-01", dataFim: null },
+    { id: "demo-tpl-ticktick", nome: "TickTick", grupo: "cartao_fixo", frequencia: "anual", mesCobranca: 10, valorPadrao: 137.90, compartilhado: false, minhaParcelaPct: 100, ativo: true, dataInicio: "2026-01", dataFim: null },
+  ],
+  // Compras avulsas (sem template) — o catch-all pra gastos pontuais.
+  expenseInstancesAvulsas: [
+    { id: "demo-inst-compra-1", templateId: null, grupo: "compras", descricao: "Compras", competencia: "2026-01", valor: 358.09, pago: true, compartilhado: false, compartilhadoCom: "", minhaParcelaPct: 100 },
+    { id: "demo-inst-compra-2", templateId: null, grupo: "compras", descricao: "Compras", competencia: "2026-02", valor: 183.27, pago: true, compartilhado: false, compartilhadoCom: "", minhaParcelaPct: 100 },
+  ],
 };
 
 // ---- Dados (Supabase: tabelas de Receita nesta fase; Despesas/
@@ -244,6 +378,16 @@ function useGcData(session) {
   const [incomeSources, setIncomeSources] = useState(GC_IS_LOCAL ? GC_DEMO_DATA.incomeSources : []);
   const [incomeEntries, setIncomeEntries] = useState(GC_IS_LOCAL ? GC_DEMO_DATA.incomeEntries : []);
   const [incomeProjections, setIncomeProjections] = useState(GC_IS_LOCAL ? GC_DEMO_DATA.incomeProjections : []);
+  const [expenseTemplates, setExpenseTemplates] = useState(GC_IS_LOCAL ? GC_DEMO_DATA.expenseTemplates : []);
+  // Em modo demo, já nasce com as instâncias que a própria geração lazy
+  // criaria (mesma função usada em produção) + as compras avulsas seed —
+  // serve de teste vivo do motor de recorrência a cada load da página.
+  const [expenseInstances, setExpenseInstances] = useState(() => {
+    if (!GC_IS_LOCAL) return [];
+    const avulsas = GC_DEMO_DATA.expenseInstancesAvulsas || [];
+    const geradas = gcGenerateMissingInstances(GC_DEMO_DATA.expenseTemplates, avulsas, competenciaAtual());
+    return [...avulsas, ...geradas];
+  });
   const [loading, setLoading] = useState(!GC_IS_LOCAL);
   const [error, setError] = useState(null);
 
@@ -251,17 +395,33 @@ function useGcData(session) {
     if (GC_IS_LOCAL || !gcSupabase) { setLoading(false); return; }
     setLoading(true);
     try {
-      const [srcRes, entRes, projRes] = await Promise.all([
+      const [srcRes, entRes, projRes, tplRes, instRes] = await Promise.all([
         gcSupabase.from("income_sources").select("*").order("ordem", { ascending: true }),
         gcSupabase.from("income_entries").select("*").order("competencia", { ascending: true }),
         gcSupabase.from("income_projections").select("*").order("ano", { ascending: true }),
+        gcSupabase.from("expense_templates").select("*").order("nome", { ascending: true }),
+        gcSupabase.from("expense_instances").select("*").order("competencia", { ascending: true }),
       ]);
       if (srcRes.error) throw srcRes.error;
       if (entRes.error) throw entRes.error;
       if (projRes.error) throw projRes.error;
+      if (tplRes.error) throw tplRes.error;
+      if (instRes.error) throw instRes.error;
+      const templates = (tplRes.data || []).map(gcRowToExpenseTemplate);
+      let instances = (instRes.data || []).map(gcRowToExpenseInstance);
+      // Geração lazy: cria só as instâncias que faltam até o mês atual e já
+      // grava de volta, pra não repetir o cálculo em todo load.
+      const novas = gcGenerateMissingInstances(templates, instances, competenciaAtual());
+      if (novas.length) {
+        const { error: genErr } = await gcSupabase.from("expense_instances").upsert(novas.map(gcExpenseInstanceToRow));
+        if (genErr) console.error(genErr);
+        else instances = [...instances, ...novas];
+      }
       setIncomeSources((srcRes.data || []).map(gcRowToIncomeSource));
       setIncomeEntries((entRes.data || []).map(gcRowToIncomeEntry));
       setIncomeProjections((projRes.data || []).map(gcRowToIncomeProjection));
+      setExpenseTemplates(templates);
+      setExpenseInstances(instances);
     } catch (err) {
       console.error(err);
       setError(gcWriteErrorMsg(err, "carregar os dados"));
@@ -313,9 +473,56 @@ function useGcData(session) {
     return true;
   };
 
+  const saveExpenseTemplate = async (t) => {
+    setExpenseTemplates(prev => prev.some(x => x.id === t.id) ? prev.map(x => x.id === t.id ? t : x) : [...prev, t]);
+    if (GC_IS_LOCAL) return true;
+    const { error: err } = await gcSupabase.from("expense_templates").upsert(gcExpenseTemplateToRow(t));
+    if (err) { console.error(err); setError(gcWriteErrorMsg(err, "salvar a recorrência")); await loadData(); return false; }
+    return true;
+  };
+
+  // Apagar um template não apaga o histórico já gerado: as instâncias ficam
+  // órfãs (templateId null), igual ao "on delete set null" da FK no banco.
+  const deleteExpenseTemplate = async (id) => {
+    setExpenseTemplates(prev => prev.filter(t => t.id !== id));
+    setExpenseInstances(prev => prev.map(i => i.templateId === id ? { ...i, templateId: null } : i));
+    if (GC_IS_LOCAL) return true;
+    const { error: err } = await gcSupabase.from("expense_templates").delete().eq("id", id);
+    if (err) { console.error(err); setError(gcWriteErrorMsg(err, "excluir a recorrência")); await loadData(); return false; }
+    return true;
+  };
+
+  const saveExpenseInstance = async (inst) => {
+    setExpenseInstances(prev => prev.some(i => i.id === inst.id) ? prev.map(i => i.id === inst.id ? inst : i) : [...prev, inst]);
+    if (GC_IS_LOCAL) return true;
+    const { error: err } = await gcSupabase.from("expense_instances").upsert(gcExpenseInstanceToRow(inst));
+    if (err) { console.error(err); setError(gcWriteErrorMsg(err, "salvar a despesa")); await loadData(); return false; }
+    return true;
+  };
+
+  const deleteExpenseInstance = async (id) => {
+    setExpenseInstances(prev => prev.filter(i => i.id !== id));
+    if (GC_IS_LOCAL) return true;
+    const { error: err } = await gcSupabase.from("expense_instances").delete().eq("id", id);
+    if (err) { console.error(err); setError(gcWriteErrorMsg(err, "excluir a despesa")); await loadData(); return false; }
+    return true;
+  };
+
+  const toggleExpenseInstancePago = async (id) => {
+    let next = null;
+    setExpenseInstances(prev => prev.map(i => { if (i.id !== id) return i; next = { ...i, pago: !i.pago }; return next; }));
+    if (GC_IS_LOCAL) return true;
+    if (!next) return false;
+    const { error: err } = await gcSupabase.from("expense_instances").update({ pago: next.pago }).eq("id", id);
+    if (err) { console.error(err); setError(gcWriteErrorMsg(err, "marcar a despesa como paga")); await loadData(); return false; }
+    return true;
+  };
+
   return {
-    incomeSources, incomeEntries, incomeProjections, loading, error, dismissError: () => setError(null),
+    incomeSources, incomeEntries, incomeProjections, expenseTemplates, expenseInstances,
+    loading, error, dismissError: () => setError(null),
     saveIncomeSource, deleteIncomeSource, saveIncomeEntry, deleteIncomeEntry, saveIncomeProjection,
+    saveExpenseTemplate, deleteExpenseTemplate, saveExpenseInstance, deleteExpenseInstance, toggleExpenseInstancePago,
   };
 }
 
@@ -572,6 +779,284 @@ function GcIncomeProjectionForm({ ano, initial, onSave, onClose }) {
 }
 
 /* ---------------------------------------------------------------
+   TELA: DESPESAS (Fase 2) — lista unificada (casa/pessoal/pix/cartão fixo/
+   compras) agrupada por categoria, com checkbox de "pago" inline. É aqui
+   que vive a ação de marcar uma conta como paga (sem precisar abrir modal).
+----------------------------------------------------------------*/
+function GcDespesas({ instances, competencia, onCompetenciaChange, onTogglePago, onEditInstance }) {
+  const grupos = gcGroupInstances(instances, competencia);
+  const totalMes = gcMonthInstancesTotal(instances, competencia);
+  const custoMes = gcCustoMes(instances, competencia);
+
+  return (
+    <div className="gc-screen">
+      <div className="gc-statcards gc-statcards-2">
+        <div className="gc-statcard">
+          <span className="gc-statcard-num gc-money">{gcFmtMoney(totalMes)}</span>
+          <span className="gc-statcard-cap">Total lançado</span>
+        </div>
+        <div className="gc-statcard">
+          <span className="gc-statcard-num gc-money gc-num-red">{gcFmtMoney(custoMes)}</span>
+          <span className="gc-statcard-cap">Meu custo (após divisão)</span>
+        </div>
+      </div>
+
+      <div className="gc-month-switch">
+        <button type="button" className="lb-icon-btn" onClick={() => onCompetenciaChange(gcShiftCompetencia(competencia, -1))} aria-label="Mês anterior"><ChevronLeft size={20} /></button>
+        <span className="gc-month-label">{competenciaLabel(competencia)}</span>
+        <button type="button" className="lb-icon-btn" onClick={() => onCompetenciaChange(gcShiftCompetencia(competencia, 1))} aria-label="Próximo mês"><ChevronRight size={20} /></button>
+      </div>
+
+      {grupos.length === 0 ? (
+        <EmptyState icon={<FileText size={40} />} title="Nenhuma despesa neste mês" message="Toque no + pra lançar uma compra avulsa ou criar uma recorrência." />
+      ) : (
+        grupos.map(g => (
+          <div className="gc-group" key={g.value}>
+            <div className="gc-group-header">
+              <span>{g.label}</span>
+              <span className="gc-money">{gcFmtMoney(g.total)}</span>
+            </div>
+            <div className="gc-list">
+              {g.items.map(inst => (
+                <div className="gc-list-row" key={inst.id}>
+                  <button type="button" className={"gc-checkbox" + (inst.pago ? " checked" : "")}
+                    onClick={() => onTogglePago(inst.id)}
+                    aria-label={inst.pago ? `Marcar ${inst.descricao} como não paga` : `Marcar ${inst.descricao} como paga`}>
+                    {inst.pago && <Check size={14} />}
+                  </button>
+                  <button type="button" className="gc-list-row-main" onClick={() => onEditInstance(inst)}>
+                    <span className="gc-list-row-title">{inst.descricao}</span>
+                    {inst.compartilhado && (
+                      <span className="gc-pill gc-pill-gold">Dividido{inst.compartilhadoCom ? " · " + inst.compartilhadoCom : ""}</span>
+                    )}
+                  </button>
+                  <span className="gc-row-valor-display gc-money">{gcFmtMoney(inst.valor)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))
+      )}
+    </div>
+  );
+}
+
+function GcExpenseInstanceForm({ initial, competencia, onSave, onDelete, onClose }) {
+  const [descricao, setDescricao] = useState(initial ? initial.descricao : "Compras");
+  const [grupo, setGrupo] = useState(initial ? initial.grupo : "compras");
+  const [valor, setValor] = useState(initial ? String(initial.valor) : "");
+  const [pago, setPago] = useState(initial ? initial.pago : false);
+  const [compartilhado, setCompartilhado] = useState(initial ? initial.compartilhado : false);
+  const [compartilhadoCom, setCompartilhadoCom] = useState(initial ? initial.compartilhadoCom : "");
+  const [minhaParcelaPct, setMinhaParcelaPct] = useState(initial ? String(initial.minhaParcelaPct) : "100");
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setBusy(true);
+    const ok = await onSave({
+      id: initial ? initial.id : uid(),
+      templateId: initial ? initial.templateId : null,
+      grupo, descricao: descricao.trim() || "Compras",
+      competencia: initial ? initial.competencia : competencia,
+      valor: parseFloat(String(valor).replace(",", ".")) || 0,
+      pago, compartilhado, compartilhadoCom: compartilhado ? compartilhadoCom : "",
+      minhaParcelaPct: compartilhado ? (parseFloat(minhaParcelaPct) || 0) : 100,
+    });
+    setBusy(false);
+    if (ok !== false) onClose();
+  };
+
+  return (
+    <Modal title={initial ? "Editar despesa" : "Nova despesa avulsa"} onClose={onClose}>
+      <form onSubmit={submit} className="lb-form-grid">
+        <Field label="Descrição" wide>
+          <input value={descricao} onChange={e => setDescricao(e.target.value)} required autoFocus />
+        </Field>
+        <Field label="Categoria" wide select>
+          <select value={grupo} onChange={e => setGrupo(e.target.value)}>
+            {GC_EXPENSE_GROUPS.map(g => <option key={g.value} value={g.value}>{g.label}</option>)}
+          </select>
+        </Field>
+        <Field label="Valor">
+          <input type="number" inputMode="decimal" step="0.01" value={valor} onChange={e => setValor(e.target.value)} required />
+        </Field>
+        <Field label="Situação">
+          <Segmented options={[{ value: "pendente", label: "Pendente" }, { value: "pago", label: "Paga" }]} value={pago ? "pago" : "pendente"} onChange={v => setPago(v === "pago")} />
+        </Field>
+        <Field label="Dividida com terceiro?" wide>
+          <Segmented options={[{ value: "nao", label: "Não" }, { value: "sim", label: "Sim" }]} value={compartilhado ? "sim" : "nao"} onChange={v => setCompartilhado(v === "sim")} />
+        </Field>
+        {compartilhado && (
+          <>
+            <Field label="Dividida com">
+              <input value={compartilhadoCom} onChange={e => setCompartilhadoCom(e.target.value)} placeholder="Ex.: Bruno" />
+            </Field>
+            <Field label="Minha parte (%)">
+              <input type="number" min="0" max="100" step="1" value={minhaParcelaPct} onChange={e => setMinhaParcelaPct(e.target.value)} />
+            </Field>
+          </>
+        )}
+        <div className="lb-form-footer">
+          <div className="lb-form-actions">
+            <div className="lb-form-actions-left">
+              {initial && (
+                <button type="button" className="lb-btn danger" onClick={async () => {
+                  if (!confirm("Excluir esta despesa?")) return;
+                  const ok = await onDelete(initial.id);
+                  if (ok !== false) onClose();
+                }}>
+                  <Trash2 size={16} /> Excluir
+                </button>
+              )}
+            </div>
+            <div className="lb-form-actions-right">
+              <button type="button" className="lb-btn ghost" onClick={onClose}>Cancelar</button>
+              <button type="submit" className="lb-btn primary" disabled={busy}>{busy ? "Salvando..." : "Salvar"}</button>
+            </div>
+          </div>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+/* ---------------------------------------------------------------
+   TELA: RECORRÊNCIAS (Fase 2) — CRUD dos templates que geram as instâncias
+   de Despesas automaticamente (ver gcGenerateMissingInstances).
+----------------------------------------------------------------*/
+function GcRecorrencias({ templates, onEdit }) {
+  const ordenados = templates.slice().sort((a, b) => a.grupo.localeCompare(b.grupo) || a.nome.localeCompare(b.nome));
+  return (
+    <div className="gc-screen">
+      {ordenados.length === 0 ? (
+        <EmptyState icon={<Repeat size={40} />} title="Nenhuma recorrência" message="Toque no + pra cadastrar uma conta fixa, assinatura ou cobrança anual." />
+      ) : (
+        <div className="gc-list">
+          {ordenados.map(t => (
+            <button type="button" className="gc-list-row gc-list-row-btn" key={t.id} onClick={() => onEdit(t)}>
+              <span className={"gc-pill" + (t.compartilhado ? " gc-pill-gold" : "")}>{gcExpenseGroupLabel(t.grupo)}</span>
+              <span className="gc-list-row-title gc-list-row-grow">
+                {t.nome}
+                <small className="gc-list-row-sub">
+                  {t.frequencia === "anual" ? `Anual · ${MONTH_LABELS[(t.mesCobranca || 1) - 1]}` : "Mensal"}
+                  {t.dataFim ? " · pausada" : t.ativo === false ? " · inativa" : ""}
+                  {t.compartilhado ? ` · ${t.minhaParcelaPct}% minha parte` : ""}
+                </small>
+              </span>
+              <span className="gc-money">{gcFmtMoney(t.valorPadrao)}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function GcExpenseTemplateForm({ initial, onSave, onDelete, onClose }) {
+  const [nome, setNome] = useState(initial ? initial.nome : "");
+  const [grupo, setGrupo] = useState(initial ? initial.grupo : "pix");
+  const [frequencia, setFrequencia] = useState(initial ? initial.frequencia : "mensal");
+  const [mesCobranca, setMesCobranca] = useState(initial && initial.mesCobranca ? String(initial.mesCobranca) : "1");
+  const [valorPadrao, setValorPadrao] = useState(initial ? String(initial.valorPadrao) : "");
+  const [dataInicio, setDataInicio] = useState(initial ? initial.dataInicio : competenciaAtual());
+  const [dataFim, setDataFim] = useState(initial && initial.dataFim ? initial.dataFim : "");
+  const [compartilhado, setCompartilhado] = useState(initial ? initial.compartilhado : false);
+  const [compartilhadoCom, setCompartilhadoCom] = useState(initial ? initial.compartilhadoCom : "");
+  const [minhaParcelaPct, setMinhaParcelaPct] = useState(initial ? String(initial.minhaParcelaPct) : "100");
+  const [ativo, setAtivo] = useState(initial ? initial.ativo : true);
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!nome.trim() || !dataInicio) return;
+    setBusy(true);
+    const ok = await onSave({
+      id: initial ? initial.id : uid(),
+      nome: nome.trim(), grupo, frequencia,
+      mesCobranca: frequencia === "anual" ? parseInt(mesCobranca, 10) : null,
+      diaVencimento: initial ? initial.diaVencimento : null,
+      valorPadrao: parseFloat(String(valorPadrao).replace(",", ".")) || 0,
+      compartilhado, compartilhadoCom: compartilhado ? compartilhadoCom : "",
+      minhaParcelaPct: compartilhado ? (parseFloat(minhaParcelaPct) || 0) : 100,
+      ativo, dataInicio, dataFim: dataFim || null,
+      observacao: initial ? initial.observacao : "",
+    });
+    setBusy(false);
+    if (ok !== false) onClose();
+  };
+
+  return (
+    <Modal title={initial ? "Editar recorrência" : "Nova recorrência"} onClose={onClose} wide>
+      <form onSubmit={submit} className="lb-form-grid">
+        <Field label="Nome" wide>
+          <input value={nome} onChange={e => setNome(e.target.value)} placeholder="Ex.: Psicóloga" autoFocus required />
+        </Field>
+        <Field label="Categoria" select>
+          <select value={grupo} onChange={e => setGrupo(e.target.value)}>
+            {GC_EXPENSE_GROUPS.filter(g => g.value !== "compras").map(g => <option key={g.value} value={g.value}>{g.label}</option>)}
+          </select>
+        </Field>
+        <Field label="Valor padrão">
+          <input type="number" inputMode="decimal" step="0.01" value={valorPadrao} onChange={e => setValorPadrao(e.target.value)} required />
+        </Field>
+        <Field label="Frequência" wide>
+          <Segmented options={[{ value: "mensal", label: "Mensal" }, { value: "anual", label: "Anual (1x/ano)" }]} value={frequencia} onChange={setFrequencia} />
+        </Field>
+        {frequencia === "anual" && (
+          <Field label="Mês de cobrança" wide select>
+            <select value={mesCobranca} onChange={e => setMesCobranca(e.target.value)}>
+              {MONTH_LABELS.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
+            </select>
+          </Field>
+        )}
+        <Field label="Começa em">
+          <input type="month" value={dataInicio} onChange={e => setDataInicio(e.target.value)} required />
+        </Field>
+        <Field label="Termina em (opcional)">
+          <input type="month" value={dataFim} onChange={e => setDataFim(e.target.value)} />
+        </Field>
+        <Field label="Dividida com terceiro?" wide>
+          <Segmented options={[{ value: "nao", label: "Não" }, { value: "sim", label: "Sim" }]} value={compartilhado ? "sim" : "nao"} onChange={v => setCompartilhado(v === "sim")} />
+        </Field>
+        {compartilhado && (
+          <>
+            <Field label="Dividida com">
+              <input value={compartilhadoCom} onChange={e => setCompartilhadoCom(e.target.value)} placeholder="Ex.: Bruno" />
+            </Field>
+            <Field label="Minha parte (%)">
+              <input type="number" min="0" max="100" step="1" value={minhaParcelaPct} onChange={e => setMinhaParcelaPct(e.target.value)} />
+            </Field>
+          </>
+        )}
+        <Field label="Ativa?" wide>
+          <Segmented options={[{ value: "ativa", label: "Ativa" }, { value: "pausada", label: "Pausada" }]} value={ativo ? "ativa" : "pausada"} onChange={v => setAtivo(v === "ativa")} />
+        </Field>
+        <div className="lb-form-footer">
+          <div className="lb-form-actions">
+            <div className="lb-form-actions-left">
+              {initial && (
+                <button type="button" className="lb-btn danger" onClick={async () => {
+                  if (!confirm("Excluir esta recorrência? As instâncias já geradas continuam no histórico.")) return;
+                  const ok = await onDelete(initial.id);
+                  if (ok !== false) onClose();
+                }}>
+                  <Trash2 size={16} /> Excluir
+                </button>
+              )}
+            </div>
+            <div className="lb-form-actions-right">
+              <button type="button" className="lb-btn ghost" onClick={onClose}>Cancelar</button>
+              <button type="submit" className="lb-btn primary" disabled={busy}>{busy ? "Salvando..." : "Salvar"}</button>
+            </div>
+          </div>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+/* ---------------------------------------------------------------
    SHELL DO APP (topbar, gaveta lateral, nav inferior + FAB contextual).
    Fase 0: telas ainda são placeholders (EmptyState) — cada uma vira de
    verdade na fase correspondente (ver CLAUDE.md > Roadmap).
@@ -589,7 +1074,6 @@ const GC_NAV_ITEMS = [
 // ora só explica o que está por vir.
 function gcFabHint(subTab) {
   switch (subTab) {
-    case "despesas": return "Lançar uma despesa avulsa (Compras) ou criar uma recorrência chega na Fase 2.";
     case "investimentos": return "Registrar o saldo do mês chega na Fase 3.";
     case "sonhos": return "Adicionar um item à Lista de Sonhos chega na Fase 4.";
     default: return "As ações rápidas chegam junto com cada tela, fase a fase.";
@@ -606,8 +1090,10 @@ function gcInitialReceitasCompetencia() {
 
 function App({ session }) {
   const {
-    incomeSources, incomeEntries, incomeProjections, loading, error, dismissError,
+    incomeSources, incomeEntries, incomeProjections, expenseTemplates, expenseInstances,
+    loading, error, dismissError,
     saveIncomeSource, deleteIncomeSource, saveIncomeEntry, saveIncomeProjection,
+    saveExpenseTemplate, deleteExpenseTemplate, saveExpenseInstance, deleteExpenseInstance, toggleExpenseInstancePago,
   } = useGcData(session);
   // (deleteIncomeEntry existe no hook, ainda sem UI que remova um lançamento
   // pontual — fica pra quando a tela de Receitas ganhar essa ação.)
@@ -615,8 +1101,12 @@ function App({ session }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [fabInfo, setFabInfo] = useState(false);
   const [receitasComp, setReceitasComp] = useState(gcInitialReceitasCompetencia);
+  const [despesasComp, setDespesasComp] = useState(competenciaAtual);
   const [sourceForm, setSourceForm] = useState(null);
   const [projectionForm, setProjectionForm] = useState(null);
+  const [instanceForm, setInstanceForm] = useState(null);
+  const [templateForm, setTemplateForm] = useState(null);
+  const [despesasFabMenu, setDespesasFabMenu] = useState(false);
 
   useEffect(() => {
     if (!sidebarOpen) return;
@@ -685,6 +1175,14 @@ function App({ session }) {
               onEditProjection={() => setProjectionForm({ initial: gcFindIncomeProjection(incomeProjections, receitasComp.slice(0, 4)), ano: receitasComp.slice(0, 4) })}
               onSaveEntryValor={(sourceId, competencia, existingId, valor) => saveIncomeEntry({ id: existingId || uid(), sourceId, competencia, valor })}
             />
+          ) : subTab === "despesas" ? (
+            <GcDespesas
+              instances={expenseInstances} competencia={despesasComp} onCompetenciaChange={setDespesasComp}
+              onTogglePago={toggleExpenseInstancePago}
+              onEditInstance={(inst) => setInstanceForm({ initial: inst })}
+            />
+          ) : subTab === "recorrencias" ? (
+            <GcRecorrencias templates={expenseTemplates} onEdit={(t) => setTemplateForm({ initial: t })} />
           ) : (
             <EmptyState
               icon={current ? current.icon(40) : <BarChart3 size={40} />}
@@ -703,8 +1201,13 @@ function App({ session }) {
             <BarChart3 size={20} /><span>Dashboard</span>
           </button>
           <button type="button" className="gc-navfab"
-            onClick={() => { if (subTab === "receitas") setSourceForm({ initial: null }); else setFabInfo(true); }}
-            aria-label={subTab === "receitas" ? "Nova fonte de receita" : "Adicionar"}>
+            onClick={() => {
+              if (subTab === "receitas") setSourceForm({ initial: null });
+              else if (subTab === "despesas") setDespesasFabMenu(true);
+              else if (subTab === "recorrencias") setTemplateForm({ initial: null });
+              else setFabInfo(true);
+            }}
+            aria-label={subTab === "receitas" ? "Nova fonte de receita" : subTab === "despesas" ? "Nova despesa" : subTab === "recorrencias" ? "Nova recorrência" : "Adicionar"}>
             <Plus size={26} />
           </button>
           <button type="button" className={"gc-navbtn" + (subTab === "despesas" ? " active" : "")} onClick={() => setSubTab("despesas")}>
@@ -722,6 +1225,26 @@ function App({ session }) {
         )}
         {projectionForm && (
           <GcIncomeProjectionForm ano={projectionForm.ano} initial={projectionForm.initial} onSave={saveIncomeProjection} onClose={() => setProjectionForm(null)} />
+        )}
+        {despesasFabMenu && (
+          <Modal title="O que você quer lançar?" onClose={() => setDespesasFabMenu(false)}>
+            <div className="gc-fab-menu">
+              <button type="button" className="gc-fab-option" onClick={() => { setDespesasFabMenu(false); setInstanceForm({ initial: null }); }}>
+                <FileText size={22} />
+                <span className="gc-fab-option-txt"><strong>Despesa avulsa</strong><small>Uma compra pontual (Compras)</small></span>
+              </button>
+              <button type="button" className="gc-fab-option" onClick={() => { setDespesasFabMenu(false); setTemplateForm({ initial: null }); }}>
+                <Repeat size={22} />
+                <span className="gc-fab-option-txt"><strong>Nova recorrência</strong><small>Conta fixa, assinatura ou cobrança anual</small></span>
+              </button>
+            </div>
+          </Modal>
+        )}
+        {instanceForm && (
+          <GcExpenseInstanceForm initial={instanceForm.initial} competencia={despesasComp} onSave={saveExpenseInstance} onDelete={deleteExpenseInstance} onClose={() => setInstanceForm(null)} />
+        )}
+        {templateForm && (
+          <GcExpenseTemplateForm initial={templateForm.initial} onSave={saveExpenseTemplate} onDelete={deleteExpenseTemplate} onClose={() => setTemplateForm(null)} />
         )}
       </div>
     </>
@@ -948,6 +1471,32 @@ div.gc-statcard { cursor: default; }
 .gc-row-valor { width: 110px; flex-shrink: 0; text-align: right; padding: 8px 10px; border-radius: var(--radius-pill); border: 1px solid var(--gc-line); font-size: 15px; font-weight: 600; color: var(--gc-ink); }
 .gc-row-valor:focus { outline: 1.5px solid var(--gc-accent); outline-offset: 1px; }
 .gc-list-total { display: flex; align-items: center; justify-content: space-between; padding: var(--sp-3) var(--sp-4); background: var(--gc-surface-2); font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 14.5px; }
+
+.gc-statcards-2 { grid-template-columns: repeat(2, 1fr); }
+.gc-num-red { color: var(--gc-red); }
+
+.gc-group { display: flex; flex-direction: column; gap: var(--sp-2); }
+.gc-group-header { display: flex; align-items: center; justify-content: space-between; padding: 0 var(--sp-1); font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 12px; text-transform: uppercase; letter-spacing: .4px; color: var(--gc-ink-soft); }
+
+.gc-checkbox {
+  flex-shrink: 0; width: 24px; height: 24px; border-radius: var(--radius-sm); border: 1.5px solid var(--gc-line);
+  background: #fff; display: flex; align-items: center; justify-content: center; color: #fff; cursor: pointer; padding: 0;
+}
+.gc-checkbox.checked { background: var(--gc-accent); border-color: var(--gc-accent); }
+.gc-row-valor-display { width: 90px; flex-shrink: 0; text-align: right; font-size: 14.5px; font-weight: 600; }
+
+button.gc-list-row-btn { background: none; border: none; width: 100%; text-align: left; cursor: pointer; font: inherit; color: inherit; border-bottom: 1px solid var(--gc-line); }
+button.gc-list-row-btn:last-of-type { border-bottom: none; }
+button.gc-list-row-btn:hover { background: var(--gc-surface-2); }
+.gc-list-row-grow { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.gc-list-row-sub { display: block; font-family: 'Space Grotesk', sans-serif; font-weight: 500; font-size: 11.5px; color: var(--gc-ink-soft); text-transform: none; letter-spacing: 0; }
+
+.gc-fab-menu { display: flex; flex-direction: column; gap: var(--sp-2); }
+.gc-fab-option { display: flex; align-items: center; gap: var(--sp-3); padding: var(--sp-3) var(--sp-3); border: 1px solid var(--gc-line); border-radius: var(--radius-md); background: #fff; cursor: pointer; text-align: left; color: var(--gc-accent); }
+.gc-fab-option:hover { background: var(--gc-surface-2); }
+.gc-fab-option-txt { display: flex; flex-direction: column; color: var(--gc-ink); }
+.gc-fab-option-txt strong { font-family: 'Space Grotesk', sans-serif; font-size: 14.5px; }
+.gc-fab-option-txt small { color: var(--gc-ink-soft); font-size: 12.5px; }
 
 /* ---- Shell (topbar, sidebar, bottomnav, login) ---- */
 .gc-app { min-height: 100vh; padding-top: var(--gc-topbar-h); padding-bottom: calc(78px + env(safe-area-inset-bottom, var(--gc-sab))); }
