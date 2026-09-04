@@ -85,6 +85,7 @@ const Gift = (p) => <IconBase {...p}><polyline points="20 12 20 22 4 22 4 12"/><
 const Menu = (p) => <IconBase {...p}><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></IconBase>;
 const Upload = (p) => <IconBase {...p}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></IconBase>;
 const Settings = (p) => <IconBase {...p}><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></IconBase>;
+const Utensils = (p) => <IconBase {...p}><path d="M3 2v7c0 1.1.9 2 2 2h4a2 2 0 0 0 2-2V2"/><path d="M7 2v20"/><path d="M21 15V2a5 5 0 0 0-5 5v6c0 1.1.9 2 2 2h3z"/><path d="M21 15v7"/></IconBase>;
 
 // Marca (círculo + cifrão), mesmo papel do GgFlower no Guitchelin: usada no
 // topbar e como ícone do botão que abre/fecha a gaveta lateral (outline
@@ -140,6 +141,23 @@ function gcFmtSignedPct(pct) {
   return pct > 0 ? "+" + body : body;
 }
 
+// ---- Fórmulas de Conta (bar/restaurante, só sessão — sem Firebase) ----
+// Itens mandam: se a lista tem algo, a base é a soma; senão, o total manual.
+function gcContaBase(itens, totalManual) {
+  if (itens && itens.length) return itens.reduce((s, i) => s + (i.valor || 0), 0);
+  return totalManual || 0;
+}
+function gcContaTaxa(base, comTaxa, pct) {
+  if (!comTaxa) return 0;
+  const p = pct == null || pct === "" ? 0 : Number(pct);
+  return base * (Number.isFinite(p) ? p : 0) / 100;
+}
+function gcContaTotal(base, taxa) { return (base || 0) + (taxa || 0); }
+function gcContaPorPessoa(total, pessoas) {
+  const n = Math.max(1, parseInt(pessoas, 10) || 1);
+  return (total || 0) / n;
+}
+
 // ---- Fórmulas de Receita (funções puras, sem React/Firebase) ----
 function gcFindIncomeEntry(entries, sourceId, competencia) {
   return entries.find(e => e.sourceId === sourceId && e.competencia === competencia) || null;
@@ -156,11 +174,48 @@ function gcExtraAcumuladoYTD(entries, sources, ano, ateCompetencia) {
     .filter(e => extraIds.has(e.sourceId) && e.competencia.startsWith(ano + "-") && e.competencia <= ateCompetencia)
     .reduce((s, e) => s + (e.valor || 0), 0);
 }
-function gcRendaFixaAnualGarantida(projection) {
-  return projection ? (projection.rendaFixaMensalEsperada || 0) * 12 : 0;
+// Renda fixa mensal = soma das fontes tipo "work" no mês mais recente
+// com lançamento no ano; anual = esse valor × 12 (acompanha o salário
+// atual, não uma projeção manual).
+function gcUltimaRendaFixaMensal(entries, sources, ano) {
+  const workIds = new Set(sources.filter(s => s.tipo === "work").map(s => s.id));
+  const doAno = entries
+    .filter(e => workIds.has(e.sourceId) && e.competencia.startsWith(ano + "-") && (e.valor || 0) > 0);
+  if (!doAno.length) return 0;
+  const ultimaComp = doAno.map(e => e.competencia).sort().slice(-1)[0];
+  return entries
+    .filter(e => workIds.has(e.sourceId) && e.competencia === ultimaComp)
+    .reduce((s, e) => s + (e.valor || 0), 0);
+}
+function gcRendaFixaAnualGarantida(entries, sources, ano) {
+  return gcUltimaRendaFixaMensal(entries, sources, ano) * 12;
 }
 function gcProjecaoTotalAno(rendaFixaAnual, extraAcumuladoYTD) {
   return rendaFixaAnual + extraAcumuladoYTD;
+}
+// Teto de "até hoje" pra um ano: no ano corrente para no mês atual; em anos
+// passados cobre o ano inteiro; em anos futuros (ainda sem chegar) fica vazio.
+function gcAteCompetenciaDoAno(ano) {
+  const atual = competenciaAtual();
+  const fimAno = `${ano}-12`;
+  return atual < fimAno ? atual : fimAno;
+}
+function gcFaturamentoYTD(entries, ano, ateCompetencia) {
+  return entries
+    .filter(e => e.competencia.startsWith(ano + "-") && e.competencia <= ateCompetencia)
+    .reduce((s, e) => s + (e.valor || 0), 0);
+}
+function gcDefaultMesExpandido(ano) {
+  if (GC_IS_LOCAL && GC_DEMO_DATA.incomeEntries.length) {
+    const doAno = GC_DEMO_DATA.incomeEntries
+      .map(e => e.competencia)
+      .filter(c => c.startsWith(ano + "-"))
+      .sort();
+    if (doAno.length) return doAno.slice(-1)[0];
+  }
+  const atual = competenciaAtual();
+  if (atual.startsWith(ano + "-")) return atual;
+  return `${ano}-01`;
 }
 
 // ---- Fórmulas de Despesas/Recorrência (funções puras) ----
@@ -853,100 +908,133 @@ function EmptyState({ icon, title, message, action }) {
    fonte de receita, com seletor de mês (mesmo padrão de mês que Despesas
    vai usar na Fase 2).
 ----------------------------------------------------------------*/
-function GcReceitas({ sources, entries, projections, competencia, onCompetenciaChange, onEditSource, onEditProjection, onSaveEntryValor }) {
-  const [mostrarExtrasZerados, setMostrarExtrasZerados] = useState(false);
-  useEffect(() => { setMostrarExtrasZerados(false); }, [competencia]);
-  const ano = competencia.slice(0, 4);
-  const projection = gcFindIncomeProjection(projections, ano);
-  const rendaFixaAnual = gcRendaFixaAnualGarantida(projection);
-  const extraYTD = gcExtraAcumuladoYTD(entries, sources, ano, competencia);
+function GcReceitas({ sources, entries, ano, onAnoChange, onEditSource, onSaveEntryValor }) {
+  const [mesExpandido, setMesExpandido] = useState(() => gcDefaultMesExpandido(ano));
+  useEffect(() => {
+    setMesExpandido(gcDefaultMesExpandido(ano));
+  }, [ano]);
+
+  const ate = gcAteCompetenciaDoAno(ano);
+  const rendaFixaAnual = gcRendaFixaAnualGarantida(entries, sources, ano);
+  const extraYTD = gcExtraAcumuladoYTD(entries, sources, ano, ate);
   const projecaoTotal = gcProjecaoTotalAno(rendaFixaAnual, extraYTD);
+  const faturamentoYTD = gcFaturamentoYTD(entries, ano, ate);
+  const meses = gcMonthsOfYear(ano);
   const ativos = sources.filter(s => s.ativo !== false).slice().sort((a, b) => (a.ordem || 0) - (b.ordem || 0));
   const ativoIds = new Set(ativos.map(s => s.id));
-  const monthTotal = gcMonthEntriesTotal(entries.filter(e => ativoIds.has(e.sourceId)), competencia);
-  // Extra só aparece no mês se tiver valor > 0 (ex.: Cambridge some nos meses sem aula).
-  // "Lançar extra" revela as ocultas pra digitar um valor novo.
-  const temValorNoMes = (source) => {
-    const entry = gcFindIncomeEntry(entries, source.id, competencia);
-    return !!(entry && Number(entry.valor) > 0);
+  const entriesAtivos = entries.filter(e => ativoIds.has(e.sourceId));
+
+  const toggleMes = (comp) => {
+    setMesExpandido(prev => prev === comp ? null : comp);
   };
-  const extrasOcultos = ativos.filter(s => s.tipo === "extra" && !temValorNoMes(s));
-  const listados = ativos.filter(s => s.tipo !== "extra" || temValorNoMes(s) || mostrarExtrasZerados);
 
   return (
     <div className="gc-screen">
-      <div className="gc-statcards">
-        <button type="button" className="gc-statcard" onClick={onEditProjection}>
+      <div className="gc-year-switch">
+        <button type="button" className="lb-icon-btn" onClick={() => onAnoChange(String(Number(ano) - 1))} aria-label="Ano anterior"><ChevronLeft size={20} /></button>
+        <span className="gc-month-label">{ano}</span>
+        <button type="button" className="lb-icon-btn" onClick={() => onAnoChange(String(Number(ano) + 1))} aria-label="Próximo ano"><ChevronRight size={20} /></button>
+      </div>
+
+      <div className="gc-receitas-hero">
+        <span className="gc-receitas-hero-num gc-money">{gcFmtMoney(faturamentoYTD)}</span>
+        <span className="gc-receitas-hero-cap">Faturamento YTD</span>
+      </div>
+
+      <div className="gc-statcards gc-statcards-mini">
+        <div className="gc-statcard">
           <span className="gc-statcard-num gc-money">{gcFmtMoney(rendaFixaAnual)}</span>
-          <span className="gc-statcard-cap">Renda Fixa Anual (Garantida)</span>
-        </button>
+          <span className="gc-statcard-cap">Renda fixa anual</span>
+        </div>
         <div className="gc-statcard">
           <span className="gc-statcard-num gc-money">{gcFmtMoney(extraYTD)}</span>
-          <span className="gc-statcard-cap">Extra Acumulado (YTD)</span>
+          <span className="gc-statcard-cap">Extra acumulado</span>
         </div>
         <div className="gc-statcard">
           <span className="gc-statcard-num gc-money">{gcFmtMoney(projecaoTotal)}</span>
-          <span className="gc-statcard-cap">Projeção Total {ano}</span>
+          <span className="gc-statcard-cap">Projeção {ano}</span>
         </div>
-      </div>
-
-      <div className="gc-month-switch">
-        <button type="button" className="lb-icon-btn" onClick={() => onCompetenciaChange(gcShiftCompetencia(competencia, -1))} aria-label="Mês anterior"><ChevronLeft size={20} /></button>
-        <span className="gc-month-label">{competenciaLabel(competencia)}</span>
-        <button type="button" className="lb-icon-btn" onClick={() => onCompetenciaChange(gcShiftCompetencia(competencia, 1))} aria-label="Próximo mês"><ChevronRight size={20} /></button>
       </div>
 
       {ativos.length === 0 ? (
         <EmptyState icon={<TrendingUp size={40} />} title="Nenhuma fonte de receita" message="Toque no + pra cadastrar seu salário ou uma renda extra." />
       ) : (
-        <div className="gc-list">
-          {listados.map(source => {
-            const entry = gcFindIncomeEntry(entries, source.id, competencia);
+        <div className="gc-list gc-receitas-accordion">
+          {meses.map(comp => {
+            const aberto = mesExpandido === comp;
+            const totalMes = gcMonthEntriesTotal(entriesAtivos, comp);
+            // Extra só aparece no mês se tiver valor > 0 (ex.: Cambridge some
+            // nos meses sem aula). Fonte nova via + já nasce com o mês escolhido.
+            const listados = ativos.filter(s => s.tipo !== "extra" || (() => {
+              const entry = gcFindIncomeEntry(entries, s.id, comp);
+              return !!(entry && Number(entry.valor) > 0);
+            })());
             return (
-              <div className="gc-list-row" key={source.id}>
-                <button type="button" className="gc-list-row-main" onClick={() => onEditSource(source)}>
-                  <span className={"gc-pill" + (source.tipo === "extra" ? " gc-pill-gold" : "")}>{source.tipo === "extra" ? "Extra" : "Fixa"}</span>
-                  <span className="gc-list-row-title">{source.nome}</span>
+              <div className={"gc-acc-month" + (aberto ? " open" : "")} key={comp}>
+                <button type="button" className="gc-acc-head" onClick={() => toggleMes(comp)} aria-expanded={aberto}>
+                  <span className="gc-acc-head-left">
+                    <ChevronDown size={16} className={"gc-acc-chevron" + (aberto ? " open" : "")} />
+                    <span className="gc-list-row-title">{MONTH_LABELS[Number(comp.slice(5)) - 1]}</span>
+                  </span>
+                  <span className="gc-money gc-acc-total">{totalMes > 0 ? gcFmtMoney(totalMes) : "—"}</span>
                 </button>
-                <input
-                  type="number" inputMode="decimal" step="0.01" placeholder="0,00"
-                  className="gc-row-valor gc-money"
-                  defaultValue={entry ? entry.valor : ""}
-                  key={competencia + source.id + (entry ? entry.id : "novo")}
-                  onBlur={(e) => {
-                    const valor = parseFloat(e.target.value.replace(",", ".")) || 0;
-                    if (!entry && valor === 0) return;
-                    onSaveEntryValor(source.id, competencia, entry ? entry.id : null, valor);
-                  }}
-                />
+                {aberto && (
+                  <div className="gc-acc-body">
+                    {listados.map(source => {
+                      const entry = gcFindIncomeEntry(entries, source.id, comp);
+                      return (
+                        <div className="gc-list-row gc-acc-row" key={source.id}>
+                          <button type="button" className="gc-list-row-main" onClick={() => onEditSource(source)}>
+                            <span className={"gc-pill" + (source.tipo === "extra" ? " gc-pill-gold" : "")}>{source.tipo === "extra" ? "Extra" : "Fixa"}</span>
+                            <span className="gc-list-row-title">{source.nome}</span>
+                          </button>
+                          <input
+                            type="number" inputMode="decimal" step="0.01" placeholder="0,00"
+                            className="gc-row-valor gc-money"
+                            defaultValue={entry ? entry.valor : ""}
+                            key={comp + source.id + (entry ? entry.id : "novo")}
+                            onBlur={(e) => {
+                              const valor = parseFloat(e.target.value.replace(",", ".")) || 0;
+                              if (!entry && valor === 0) return;
+                              onSaveEntryValor(source.id, comp, entry ? entry.id : null, valor);
+                            }}
+                          />
+                        </div>
+                      );
+                    })}
+                    <div className="gc-list-total">
+                      <span>Total do mês</span>
+                      <span className="gc-money">{gcFmtMoney(totalMes)}</span>
+                    </div>
+                  </div>
+                )}
               </div>
             );
           })}
-          {extrasOcultos.length > 0 && !mostrarExtrasZerados && (
-            <button type="button" className="gc-list-more" onClick={() => setMostrarExtrasZerados(true)}>
-              Lançar extra deste mês
-            </button>
-          )}
-          <div className="gc-list-total">
-            <span>Total do mês</span>
-            <span className="gc-money">{gcFmtMoney(monthTotal)}</span>
-          </div>
         </div>
       )}
     </div>
   );
 }
 
-function GcIncomeSourceForm({ initial, onSave, onDelete, onClose }) {
+function GcIncomeSourceForm({ initial, defaultCompetencia, onSave, onDelete, onClose }) {
+  const isNew = !initial;
   const [nome, setNome] = useState(initial ? initial.nome : "");
   const [tipo, setTipo] = useState(initial ? initial.tipo : "work");
+  const [competencia, setCompetencia] = useState(defaultCompetencia || competenciaAtual());
+  const [valor, setValor] = useState("");
   const [busy, setBusy] = useState(false);
 
   const submit = async (e) => {
     e.preventDefault();
     if (!nome.trim()) return;
     setBusy(true);
-    const ok = await onSave({ id: initial ? initial.id : uid(), nome: nome.trim(), tipo, ativo: true, ordem: initial ? initial.ordem : 0 });
+    const source = { id: initial ? initial.id : uid(), nome: nome.trim(), tipo, ativo: true, ordem: initial ? initial.ordem : 0 };
+    const lancamento = isNew ? {
+      competencia,
+      valor: parseFloat(String(valor).replace(",", ".")) || 0,
+    } : null;
+    const ok = await onSave(source, lancamento);
     setBusy(false);
     if (ok !== false) onClose();
   };
@@ -960,6 +1048,16 @@ function GcIncomeSourceForm({ initial, onSave, onDelete, onClose }) {
         <Field label="Tipo" wide>
           <Segmented options={[{ value: "work", label: "Fixa (salário)" }, { value: "extra", label: "Extra" }]} value={tipo} onChange={setTipo} />
         </Field>
+        {isNew && (
+          <>
+            <Field label="Mês do lançamento">
+              <input type="month" value={competencia} onChange={e => setCompetencia(e.target.value)} required />
+            </Field>
+            <Field label="Valor">
+              <input type="number" inputMode="decimal" step="0.01" value={valor} onChange={e => setValor(e.target.value)} placeholder="0,00" />
+            </Field>
+          </>
+        )}
         <div className="lb-form-footer">
           <div className="lb-form-actions">
             <div className="lb-form-actions-left">
@@ -1021,9 +1119,9 @@ function GcIncomeProjectionForm({ ano, initial, onSave, onClose }) {
 /* ---------------------------------------------------------------
    TELA: DESPESAS (Fase 2) — lista unificada agrupada por área da vida
    (Casa/Saúde/Assinaturas/Pessoal/Trabalho), com checkbox de "pago"
-   inline e badge "a confirmar" nas variáveis ainda estimadas.
+   inline e input de valor nas variáveis ainda estimadas (confirma ao sair).
 ----------------------------------------------------------------*/
-function GcDespesas({ instances, categories, competencia, onCompetenciaChange, onTogglePago, onEditInstance, onManageCategories }) {
+function GcDespesas({ instances, categories, competencia, onCompetenciaChange, onTogglePago, onSaveValor, onEditInstance, onManageCategories }) {
   const grupos = gcGroupInstances(instances, competencia, categories);
   const totalMes = gcMonthInstancesTotal(instances, competencia);
   const custoMes = gcCustoMes(instances, competencia);
@@ -1086,10 +1184,28 @@ function GcDespesas({ instances, categories, competencia, onCompetenciaChange, o
                             <span className="gc-pill gc-pill-gold">{inst.compartilhadoCom || "Dividido"}</span>
                           )}
                         </span>
-                        {pendente && <small className="gc-list-row-sub">estimado</small>}
+                        {pendente && <small className="gc-list-row-sub">estimado — digite o real</small>}
                       </span>
                     </button>
-                    <span className="gc-row-valor-display gc-money">{gcFmtMoney(inst.valor)}</span>
+                    {pendente ? (
+                      <input
+                        type="number" inputMode="decimal" step="0.01" placeholder="0,00"
+                        className="gc-row-valor gc-row-valor-estimado gc-money"
+                        defaultValue={inst.valor}
+                        key={inst.id + "-est-" + inst.valor}
+                        aria-label={`Valor real de ${inst.descricao}`}
+                        onClick={e => e.stopPropagation()}
+                        onBlur={(e) => {
+                          const valor = parseFloat(String(e.target.value).replace(",", ".")) || 0;
+                          onSaveValor(inst, valor);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") e.currentTarget.blur();
+                        }}
+                      />
+                    ) : (
+                      <span className="gc-row-valor-display gc-money">{gcFmtMoney(inst.valor)}</span>
+                    )}
                   </div>
                 );
               })}
@@ -1811,6 +1927,192 @@ function GcDashboard({ incomeEntries, expenseInstances, investmentSnapshots, ano
 }
 
 /* ---------------------------------------------------------------
+   TELA: CONTA (bar/restaurante) — calculadora de sessão (some ao
+   recarregar). Itens mandam sobre o total manual; taxa opcional
+   (default 10%, % editável); divisão igual pelo nº de pessoas.
+----------------------------------------------------------------*/
+function GcConta({
+  itens, setItens, totalManual, setTotalManual, comTaxa, setComTaxa,
+  taxaPct, setTaxaPct, pessoas, setPessoas, itemForm, setItemForm,
+}) {
+  const temItens = itens.length > 0;
+  const base = gcContaBase(itens, parseFloat(String(totalManual).replace(",", ".")) || 0);
+  const taxa = gcContaTaxa(base, comTaxa, taxaPct);
+  const total = gcContaTotal(base, taxa);
+  const nPessoas = Math.max(1, parseInt(pessoas, 10) || 1);
+  const porPessoa = gcContaPorPessoa(total, nPessoas);
+
+  const saveItem = (item) => {
+    setItens(prev => {
+      const i = prev.findIndex(x => x.id === item.id);
+      if (i >= 0) {
+        const next = prev.slice();
+        next[i] = item;
+        return next;
+      }
+      return prev.concat(item);
+    });
+  };
+  const deleteItem = (id) => setItens(prev => prev.filter(x => x.id !== id));
+
+  return (
+    <div className="gc-screen">
+      <div className={"gc-statcards" + (nPessoas > 1 ? " gc-statcards-2" : " gc-statcards-1")}>
+        <div className="gc-statcard">
+          <span className="gc-statcard-num gc-money">{gcFmtMoney(total)}</span>
+          <span className="gc-statcard-cap">{comTaxa ? "Total com taxa" : "Total"}</span>
+        </div>
+        {nPessoas > 1 && (
+          <div className="gc-statcard">
+            <span className="gc-statcard-num gc-money">{gcFmtMoney(porPessoa)}</span>
+            <span className="gc-statcard-cap">Por pessoa ({nPessoas})</span>
+          </div>
+        )}
+      </div>
+
+      <div className="gc-group">
+        <div className="gc-group-header">
+          <span>Itens</span>
+          {temItens && <span className="gc-money">{gcFmtMoney(base)}</span>}
+        </div>
+        {temItens ? (
+          <div className="gc-list">
+            {itens.map(item => (
+              <div className="gc-list-row" key={item.id}>
+                <button type="button" className="gc-list-row-main" onClick={() => setItemForm({ initial: item })}>
+                  <span className="gc-list-row-title">{item.nome}</span>
+                </button>
+                <span className="gc-row-valor-display gc-money">{gcFmtMoney(item.valor)}</span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="lb-hint gc-conta-hint">Toque no + pra adicionar o que você consumiu, ou informe o total da conta abaixo.</p>
+        )}
+      </div>
+
+      <div className="gc-conta-fields">
+        <Field label="Total da conta" wide>
+          <input
+            type="number" inputMode="decimal" step="0.01" min="0"
+            value={totalManual}
+            onChange={e => setTotalManual(e.target.value)}
+            disabled={temItens}
+            placeholder={temItens ? "Usando soma dos itens" : "0,00"}
+          />
+        </Field>
+        {temItens && <p className="lb-hint gc-conta-hint-left">Limpe os itens pra usar o total da conta.</p>}
+
+        <div className="gc-conta-taxa-row">
+          <button type="button" className={"gc-checkbox" + (comTaxa ? " checked" : "")}
+            onClick={() => setComTaxa(v => !v)} aria-pressed={comTaxa} aria-label="Incluir taxa de serviço">
+            {comTaxa && <Check size={14} />}
+          </button>
+          <span className="gc-conta-taxa-label">Taxa de serviço</span>
+          <input
+            className="gc-conta-taxa-pct"
+            type="number" inputMode="decimal" step="0.1" min="0"
+            value={taxaPct}
+            onChange={e => setTaxaPct(e.target.value)}
+            disabled={!comTaxa}
+            aria-label="Percentual da taxa"
+          />
+          <span className="gc-conta-taxa-suffix">%</span>
+        </div>
+
+        <Field label="Dividir por (pessoas)" wide>
+          <input type="number" inputMode="numeric" min="1" step="1" value={pessoas}
+            onChange={e => setPessoas(e.target.value)} />
+        </Field>
+      </div>
+
+      {(base > 0 || taxa > 0) && (
+        <div className="gc-list">
+          <div className="gc-list-row">
+            <span className="gc-list-row-title">Base</span>
+            <span className="gc-row-valor-display gc-money">{gcFmtMoney(base)}</span>
+          </div>
+          {comTaxa && (
+            <div className="gc-list-row">
+              <span className="gc-list-row-title">Taxa ({taxaPct || 0}%)</span>
+              <span className="gc-row-valor-display gc-money">{gcFmtMoney(taxa)}</span>
+            </div>
+          )}
+          <div className="gc-list-total">
+            <span>Total</span>
+            <span className="gc-money">{gcFmtMoney(total)}</span>
+          </div>
+          {nPessoas > 1 && (
+            <div className="gc-list-total gc-conta-por-pessoa">
+              <span>Por pessoa</span>
+              <span className="gc-money">{gcFmtMoney(porPessoa)}</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {itemForm && (
+        <GcContaItemForm
+          initial={itemForm.initial}
+          onSave={saveItem}
+          onDelete={deleteItem}
+          onClose={() => setItemForm(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+function GcContaItemForm({ initial, onSave, onDelete, onClose }) {
+  const [nome, setNome] = useState(initial ? initial.nome : "");
+  const [valor, setValor] = useState(initial && initial.valor != null ? String(initial.valor) : "");
+
+  const submit = (e) => {
+    e.preventDefault();
+    const v = parseFloat(String(valor).replace(",", "."));
+    if (!Number.isFinite(v) || v < 0) return;
+    onSave({
+      id: initial ? initial.id : uid(),
+      nome: nome.trim() || "Item",
+      valor: v,
+    });
+    onClose();
+  };
+
+  return (
+    <Modal title={initial ? "Editar item" : "Novo item"} onClose={onClose}>
+      <form onSubmit={submit} className="lb-form-grid">
+        <Field label="Nome" wide>
+          <input value={nome} onChange={e => setNome(e.target.value)} placeholder="Ex.: chopp, burger" autoFocus />
+        </Field>
+        <Field label="Valor" wide>
+          <input type="number" inputMode="decimal" step="0.01" min="0" value={valor} onChange={e => setValor(e.target.value)} required />
+        </Field>
+        <div className="lb-form-footer">
+          <div className="lb-form-actions">
+            <div className="lb-form-actions-left">
+              {initial && (
+                <button type="button" className="lb-btn danger" onClick={() => {
+                  if (!confirm("Remover este item?")) return;
+                  onDelete(initial.id);
+                  onClose();
+                }}>
+                  <Trash2 size={16} /> Excluir
+                </button>
+              )}
+            </div>
+            <div className="lb-form-actions-right">
+              <button type="button" className="lb-btn ghost" onClick={onClose}>Cancelar</button>
+              <button type="submit" className="lb-btn primary">Salvar</button>
+            </div>
+          </div>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+/* ---------------------------------------------------------------
    SHELL DO APP (topbar, gaveta lateral, nav inferior + FAB contextual).
    Fase 0: telas ainda são placeholders (EmptyState) — cada uma vira de
    verdade na fase correspondente (ver CLAUDE.md > Roadmap).
@@ -1822,19 +2124,26 @@ const GC_NAV_ITEMS = [
   { value: "recorrencias", label: "Recorrências", icon: (s) => <Repeat size={s} />, group: "Financeiro" },
   { value: "investimentos", label: "Investimentos", icon: (s) => <TrendingUp size={s} />, group: "Financeiro" },
   { value: "sonhos", label: "Lista de Sonhos", icon: (s) => <Gift size={s} />, group: "Listas" },
+  { value: "conta", label: "Conta", icon: (s) => <Utensils size={s} />, group: "Ferramentas" },
 ];
-// Competência inicial de Receitas: no modo demo, começa no último mês com
-// lançamento (mostra dado de cara); em produção, começa no mês atual.
-function gcInitialReceitasCompetencia() {
+// Ano inicial de Receitas: no modo demo, o ano do último lançamento; senão, ano atual.
+function gcInitialReceitasAno() {
   if (GC_IS_LOCAL && GC_DEMO_DATA.incomeEntries.length) {
-    return GC_DEMO_DATA.incomeEntries.map(e => e.competencia).slice().sort().slice(-1)[0];
+    return GC_DEMO_DATA.incomeEntries.map(e => e.competencia).slice().sort().slice(-1)[0].slice(0, 4);
   }
-  return competenciaAtual();
+  return competenciaAtual().slice(0, 4);
+}
+// Competência sugerida ao criar fonte na tela de Receitas: mês atual se o
+// ano selecionado for o corrente; senão janeiro daquele ano.
+function gcReceitasDefaultCompetencia(ano) {
+  const atual = competenciaAtual();
+  if (atual.startsWith(String(ano) + "-")) return atual;
+  return `${ano}-01`;
 }
 
 function App({ session }) {
   const {
-    expenseCategories, incomeSources, incomeEntries, incomeProjections, expenseTemplates, expenseInstances, investmentSnapshots, wishlistItems,
+    expenseCategories, incomeSources, incomeEntries, expenseTemplates, expenseInstances, investmentSnapshots, wishlistItems,
     loading, error, dismissError,
     saveExpenseCategory, deleteExpenseCategory,
     saveIncomeSource, deleteIncomeSource, saveIncomeEntry, saveIncomeProjection,
@@ -1845,11 +2154,10 @@ function App({ session }) {
   // pontual — fica pra quando a tela de Receitas ganhar essa ação.)
   const [subTab, setSubTab] = useState("dashboard");
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [receitasComp, setReceitasComp] = useState(gcInitialReceitasCompetencia);
+  const [receitasAno, setReceitasAno] = useState(gcInitialReceitasAno);
   const [despesasComp, setDespesasComp] = useState(competenciaAtual);
   const [dashboardAno, setDashboardAno] = useState(() => competenciaAtual().slice(0, 4));
   const [sourceForm, setSourceForm] = useState(null);
-  const [projectionForm, setProjectionForm] = useState(null);
   const [instanceForm, setInstanceForm] = useState(null);
   const [templateForm, setTemplateForm] = useState(null);
   const [snapshotForm, setSnapshotForm] = useState(null);
@@ -1858,6 +2166,12 @@ function App({ session }) {
   const [dashboardFabMenu, setDashboardFabMenu] = useState(false);
   const [categoriesModal, setCategoriesModal] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [contaItens, setContaItens] = useState([]);
+  const [contaTotalManual, setContaTotalManual] = useState("");
+  const [contaComTaxa, setContaComTaxa] = useState(true);
+  const [contaTaxaPct, setContaTaxaPct] = useState("10");
+  const [contaPessoas, setContaPessoas] = useState("1");
+  const [contaItemForm, setContaItemForm] = useState(null);
 
   // ---- Importação inicial (temporária): escreve os mesmos dados usados no
   // modo demo (GC_DEMO_DATA, já validados contra a planilha real do Gui)
@@ -1896,6 +2210,7 @@ function App({ session }) {
   const openTab = (tab) => { setSidebarOpen(false); setSubTab(tab); };
   const financeiro = GC_NAV_ITEMS.filter(i => i.group === "Financeiro");
   const listas = GC_NAV_ITEMS.filter(i => i.group === "Listas");
+  const ferramentas = GC_NAV_ITEMS.filter(i => i.group === "Ferramentas");
   const current = GC_NAV_ITEMS.find(i => i.value === subTab);
 
   return (
@@ -1911,6 +2226,12 @@ function App({ session }) {
           ))}
           <span className="gc-sidebar-label">Listas</span>
           {listas.map(item => (
+            <button key={item.value} type="button" className={"gc-sidebar-link" + (subTab === item.value ? " active" : "")} onClick={() => openTab(item.value)}>
+              {item.icon(18)} <span>{item.label}</span>
+            </button>
+          ))}
+          <span className="gc-sidebar-label">Ferramentas</span>
+          {ferramentas.map(item => (
             <button key={item.value} type="button" className={"gc-sidebar-link" + (subTab === item.value ? " active" : "")} onClick={() => openTab(item.value)}>
               {item.icon(18)} <span>{item.label}</span>
             </button>
@@ -1957,16 +2278,16 @@ function App({ session }) {
             />
           ) : subTab === "receitas" ? (
             <GcReceitas
-              sources={incomeSources} entries={incomeEntries} projections={incomeProjections}
-              competencia={receitasComp} onCompetenciaChange={setReceitasComp}
+              sources={incomeSources} entries={incomeEntries}
+              ano={receitasAno} onAnoChange={setReceitasAno}
               onEditSource={(s) => setSourceForm({ initial: s })}
-              onEditProjection={() => setProjectionForm({ initial: gcFindIncomeProjection(incomeProjections, receitasComp.slice(0, 4)), ano: receitasComp.slice(0, 4) })}
               onSaveEntryValor={(sourceId, competencia, existingId, valor) => saveIncomeEntry({ id: existingId || uid(), sourceId, competencia, valor })}
             />
           ) : subTab === "despesas" ? (
             <GcDespesas
               instances={expenseInstances} categories={expenseCategories} competencia={despesasComp} onCompetenciaChange={setDespesasComp}
               onTogglePago={toggleExpenseInstancePago}
+              onSaveValor={(inst, valor) => saveExpenseInstance({ ...inst, valor, valorConfirmado: true })}
               onEditInstance={(inst) => setInstanceForm({ initial: inst })}
               onManageCategories={() => setCategoriesModal(true)}
             />
@@ -1980,6 +2301,15 @@ function App({ session }) {
               poderDeCompra={gcPoderDeCompra(gcSaldoEmCaixa(investmentSnapshots))}
               onToggleComprado={toggleWishlistComprado}
               onEdit={(item) => setWishlistForm({ initial: item })}
+            />
+          ) : subTab === "conta" ? (
+            <GcConta
+              itens={contaItens} setItens={setContaItens}
+              totalManual={contaTotalManual} setTotalManual={setContaTotalManual}
+              comTaxa={contaComTaxa} setComTaxa={setContaComTaxa}
+              taxaPct={contaTaxaPct} setTaxaPct={setContaTaxaPct}
+              pessoas={contaPessoas} setPessoas={setContaPessoas}
+              itemForm={contaItemForm} setItemForm={setContaItemForm}
             />
           ) : (
             <EmptyState
@@ -1997,13 +2327,14 @@ function App({ session }) {
           <button type="button" className="gc-navfab"
             onClick={() => {
               if (subTab === "dashboard") setDashboardFabMenu(true);
-              else if (subTab === "receitas") setSourceForm({ initial: null });
+              else if (subTab === "receitas") setSourceForm({ initial: null, competencia: gcReceitasDefaultCompetencia(receitasAno) });
               else if (subTab === "despesas") setDespesasFabMenu(true);
               else if (subTab === "recorrencias") setTemplateForm({ initial: null });
               else if (subTab === "investimentos") setSnapshotForm({ initialCompetencia: competenciaAtual() });
               else if (subTab === "sonhos") setWishlistForm({ initial: null });
+              else if (subTab === "conta") setContaItemForm({ initial: null });
             }}
-            aria-label={subTab === "dashboard" ? "Adicionar" : subTab === "receitas" ? "Nova fonte de receita" : subTab === "despesas" ? "Nova despesa" : subTab === "recorrencias" ? "Nova recorrência" : subTab === "investimentos" ? "Registrar saldo" : subTab === "sonhos" ? "Novo item" : "Adicionar"}>
+            aria-label={subTab === "dashboard" ? "Adicionar" : subTab === "receitas" ? "Nova fonte de receita" : subTab === "despesas" ? "Nova despesa" : subTab === "recorrencias" ? "Nova recorrência" : subTab === "investimentos" ? "Registrar saldo" : subTab === "sonhos" ? "Novo item" : subTab === "conta" ? "Novo item da conta" : "Adicionar"}>
             <Plus size={26} />
           </button>
           <button type="button" className={"gc-navbtn" + (subTab === "despesas" ? " active" : "")} onClick={() => setSubTab("despesas")}>
@@ -2012,15 +2343,28 @@ function App({ session }) {
         </nav>
 
         {sourceForm && (
-          <GcIncomeSourceForm initial={sourceForm.initial} onSave={saveIncomeSource} onDelete={deleteIncomeSource} onClose={() => setSourceForm(null)} />
-        )}
-        {projectionForm && (
-          <GcIncomeProjectionForm ano={projectionForm.ano} initial={projectionForm.initial} onSave={saveIncomeProjection} onClose={() => setProjectionForm(null)} />
+          <GcIncomeSourceForm
+            initial={sourceForm.initial}
+            defaultCompetencia={sourceForm.competencia || gcReceitasDefaultCompetencia(receitasAno)}
+            onSave={async (source, lancamento) => {
+              const ok = await saveIncomeSource(source);
+              if (ok === false) return false;
+              if (lancamento && lancamento.competencia && Number(lancamento.valor) > 0) {
+                const okEntry = await saveIncomeEntry({
+                  id: uid(), sourceId: source.id, competencia: lancamento.competencia, valor: lancamento.valor,
+                });
+                if (okEntry === false) return false;
+              }
+              return true;
+            }}
+            onDelete={deleteIncomeSource}
+            onClose={() => setSourceForm(null)}
+          />
         )}
         {dashboardFabMenu && (
           <Modal title="O que você quer registrar?" onClose={() => setDashboardFabMenu(false)}>
             <div className="gc-fab-menu">
-              <button type="button" className="gc-fab-option" onClick={() => { setDashboardFabMenu(false); setSourceForm({ initial: null }); }}>
+              <button type="button" className="gc-fab-option" onClick={() => { setDashboardFabMenu(false); setSourceForm({ initial: null, competencia: gcReceitasDefaultCompetencia(receitasAno) }); }}>
                 <TrendingUp size={22} />
                 <span className="gc-fab-option-txt"><strong>Nova fonte de receita</strong><small>Salário, extra ou outra fonte fixa</small></span>
               </button>
@@ -2302,6 +2646,8 @@ div.gc-statcard { cursor: default; }
 .gc-list-row-title-line .gc-list-row-title { flex: 0 1 auto; }
 .gc-row-valor { width: 110px; flex-shrink: 0; text-align: right; padding: 8px 10px; border-radius: var(--radius-pill); border: 1px solid var(--gc-line); font-size: 15px; font-weight: 600; color: var(--gc-ink); }
 .gc-row-valor:focus { outline: 1.5px solid var(--gc-accent); outline-offset: 1px; }
+.gc-row-valor-estimado { border-color: var(--gc-gold); background: color-mix(in srgb, var(--gc-gold) 8%, #fff); }
+.gc-row-valor-estimado:focus { outline-color: var(--gc-gold); }
 .gc-list-total { display: flex; align-items: center; justify-content: space-between; padding: var(--sp-3) var(--sp-4); background: var(--gc-surface-2); font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 14.5px; }
 .gc-list-more { display: block; width: 100%; padding: var(--sp-3) var(--sp-4); border: none; border-bottom: 1px solid var(--gc-line); background: none; cursor: pointer; text-align: left; font-family: 'Space Grotesk', sans-serif; font-size: 13px; font-weight: 600; color: var(--gc-accent); }
 .gc-list-more:hover { background: var(--gc-surface-2); }
@@ -2317,6 +2663,22 @@ div.gc-statcard { cursor: default; }
 
 .gc-group { display: flex; flex-direction: column; gap: var(--sp-2); }
 .gc-group-header { display: flex; align-items: center; justify-content: space-between; padding: 0 var(--sp-1); font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 12px; text-transform: uppercase; letter-spacing: .4px; color: var(--gc-ink-soft); }
+
+.gc-conta-fields { display: flex; flex-direction: column; gap: var(--sp-3); }
+.gc-conta-hint { margin: 0; padding: var(--sp-3) var(--sp-1); font-size: 13.5px; }
+.gc-conta-hint-left { margin: -4px 0 0; text-align: left; font-size: 12.5px; }
+.gc-conta-taxa-row { display: flex; align-items: center; gap: var(--sp-3); padding: 2px 0; }
+.gc-conta-taxa-label { flex: 1; font-family: 'Space Grotesk', sans-serif; font-weight: 600; font-size: 14px; color: var(--gc-ink); }
+.gc-conta-taxa-pct {
+  width: 72px; text-align: right; padding: 8px 10px; border-radius: var(--radius-pill);
+  border: 1px solid var(--gc-line); font-family: 'Space Grotesk', sans-serif; font-size: 15px; font-weight: 600; color: var(--gc-ink);
+  font-variant-numeric: tabular-nums;
+}
+.gc-conta-taxa-pct:focus { outline: 1.5px solid var(--gc-accent); outline-offset: 1px; }
+.gc-conta-taxa-pct:disabled { opacity: .45; background: var(--gc-surface-2); }
+.gc-conta-taxa-suffix { font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 14px; color: var(--gc-ink-soft); }
+.gc-conta-por-pessoa { border-top: 1px solid var(--gc-line); background: #fff; color: var(--gc-accent); }
+.gc-conta-fields input:disabled { opacity: .55; background: var(--gc-surface-2); cursor: not-allowed; }
 
 .gc-checkbox {
   flex-shrink: 0; width: 24px; height: 24px; border-radius: var(--radius-sm); border: 1.5px solid var(--gc-line);
@@ -2341,6 +2703,41 @@ button.gc-list-row-btn:hover { background: var(--gc-surface-2); }
 /* ---- Dashboard: statcards-3, gráficos SVG/CSS puro, fluxo de caixa ---- */
 .gc-statcards-3 { grid-template-columns: repeat(3, 1fr); }
 .gc-year-switch { display: flex; align-items: center; justify-content: center; gap: var(--sp-3); }
+
+.gc-receitas-hero {
+  display: flex; flex-direction: column; align-items: center; gap: 4px; text-align: center;
+  background: var(--gc-surface-2); border: 1px solid var(--gc-line); border-radius: var(--radius-md);
+  padding: var(--sp-5) var(--sp-4);
+}
+.gc-receitas-hero-num {
+  font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 28px;
+  color: var(--gc-accent); font-variant-numeric: tabular-nums; letter-spacing: -0.5px;
+}
+.gc-receitas-hero-cap {
+  font-family: 'Space Grotesk', sans-serif; font-size: 11px; text-transform: uppercase;
+  letter-spacing: .5px; color: var(--gc-ink-soft);
+}
+.gc-statcards-mini .gc-statcard { padding: var(--sp-2) var(--sp-1); }
+.gc-statcards-mini .gc-statcard-num { font-size: 13px; }
+.gc-statcards-mini .gc-statcard-cap { font-size: 9px; }
+
+.gc-receitas-accordion .gc-acc-month { border-bottom: 1px solid var(--gc-line); }
+.gc-receitas-accordion .gc-acc-month:last-child { border-bottom: none; }
+.gc-acc-head {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3);
+  width: 100%; padding: var(--sp-3) var(--sp-4); border: none; background: none;
+  cursor: pointer; font: inherit; color: inherit; text-align: left;
+}
+.gc-acc-head:hover { background: var(--gc-surface-2); }
+.gc-acc-month.open > .gc-acc-head { background: var(--gc-surface-2); }
+.gc-acc-head-left { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.gc-acc-chevron { color: var(--gc-ink-soft); flex-shrink: 0; transition: transform .15s ease; transform: rotate(-90deg); }
+.gc-acc-chevron.open { transform: rotate(0deg); }
+.gc-acc-total { font-family: 'Space Grotesk', sans-serif; font-weight: 600; font-size: 14px; font-variant-numeric: tabular-nums; color: var(--gc-ink); }
+.gc-acc-body { border-top: 1px solid var(--gc-line); background: #fff; }
+.gc-acc-row { padding-left: calc(var(--sp-4) + 24px); }
+.gc-acc-body .gc-list-more { padding-left: calc(var(--sp-4) + 24px); }
+.gc-acc-body .gc-list-total { padding-left: calc(var(--sp-4) + 24px); }
 
 .gc-dashboard-section { display: flex; flex-direction: column; gap: var(--sp-3); }
 .gc-section-title { margin: 0; font-family: 'Playfair Display', serif; font-weight: 700; font-size: 16px; color: var(--gc-ink); }
