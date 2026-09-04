@@ -84,6 +84,8 @@ const Repeat = (p) => <IconBase {...p}><polyline points="17 1 21 5 17 9"/><path 
 const Gift = (p) => <IconBase {...p}><polyline points="20 12 20 22 4 22 4 12"/><rect x="2" y="7" width="20" height="5"/><line x1="12" y1="22" x2="12" y2="7"/><path d="M12 7H7.5a2.5 2.5 0 0 1 0-5C11 2 12 7 12 7z"/><path d="M12 7h4.5a2.5 2.5 0 0 0 0-5C13 2 12 7 12 7z"/></IconBase>;
 const Menu = (p) => <IconBase {...p}><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></IconBase>;
 const Upload = (p) => <IconBase {...p}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></IconBase>;
+const Settings = (p) => <IconBase {...p}><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></IconBase>;
+const Trash = (p) => <IconBase {...p}><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></IconBase>;
 
 // Marca (círculo + cifrão), mesmo papel do GgFlower no Guitchelin: usada no
 // topbar e como ícone do botão que abre/fecha a gaveta lateral (outline
@@ -147,15 +149,19 @@ function gcProjecaoTotalAno(rendaFixaAnual, extraAcumuladoYTD) {
 }
 
 // ---- Fórmulas de Despesas/Recorrência (funções puras) ----
-const GC_EXPENSE_GROUPS = [
-  { value: "casa", label: "Casa" },
-  { value: "pessoal", label: "Pessoal" },
-  { value: "pix", label: "PIX" },
-  { value: "cartao_fixo", label: "Cartão fixo" },
-  { value: "compras", label: "Compras" },
+// Categorias hoje vêm do Firestore (coleção expense_categories, editável
+// pelo usuário - ver GcManageCategoriesModal). Esta constante só serve de
+// seed inicial (instalação nova / modo demo) e de fallback de rótulo caso
+// uma categoria referenciada em algum lugar já tenha sido apagada.
+const GC_EXPENSE_GROUPS_SEED = [
+  { id: "casa", nome: "Casa", ordem: 0 },
+  { id: "pessoal", nome: "Pessoal", ordem: 1 },
+  { id: "pix", nome: "PIX", ordem: 2 },
+  { id: "cartao_fixo", nome: "Cartão fixo", ordem: 3 },
+  { id: "compras", nome: "Compras", ordem: 4 },
 ];
-function gcExpenseGroupLabel(grupo) {
-  return (GC_EXPENSE_GROUPS.find(g => g.value === grupo) || {}).label || grupo;
+function gcExpenseGroupLabel(grupo, categories) {
+  return ((categories || []).find(g => g.id === grupo) || {}).nome || grupo;
 }
 // Custo de vida de UMA instância: a parte que é minha de verdade. Uma conta
 // dividida com terceiro (minhaParcelaPct = 0) some do custo de vida sem
@@ -173,12 +179,14 @@ function gcMonthInstancesTotal(instances, competencia) {
 function gcCustoMes(instances, competencia) {
   return gcInstancesForCompetencia(instances, competencia).reduce((s, i) => s + gcCustoInstance(i), 0);
 }
-function gcGroupInstances(instances, competencia) {
+function gcGroupInstances(instances, competencia, categories) {
   const doMes = gcInstancesForCompetencia(instances, competencia);
-  return GC_EXPENSE_GROUPS
+  return (categories || [])
+    .slice()
+    .sort((a, b) => (a.ordem || 0) - (b.ordem || 0))
     .map(g => {
-      const items = doMes.filter(i => i.grupo === g.value).sort((a, b) => (a.descricao || "").localeCompare(b.descricao || ""));
-      return { ...g, items, total: items.reduce((s, i) => s + (i.valor || 0), 0) };
+      const items = doMes.filter(i => i.grupo === g.id).sort((a, b) => (a.descricao || "").localeCompare(b.descricao || ""));
+      return { value: g.id, label: g.nome, items, total: items.reduce((s, i) => s + (i.valor || 0), 0) };
     })
     .filter(g => g.items.length > 0);
 }
@@ -403,6 +411,7 @@ async function gcUpdateFields(session, colecao, id, fields) {
 // Firebase, com os números reais da planilha original (WriteChoice/
 // Cambridge, Jan–Jul/2026). ----
 const GC_DEMO_DATA = {
+  expenseCategories: GC_EXPENSE_GROUPS_SEED,
   incomeSources: [
     { id: "demo-src-writechoice", nome: "WriteChoice", tipo: "work", ativo: true, ordem: 0 },
     { id: "demo-src-cambridge", nome: "Cambridge", tipo: "extra", ativo: true, ordem: 1 },
@@ -475,6 +484,7 @@ const GC_DEMO_DATA = {
 // nunca chamam gcFirestore direto, só conhecem os verbos save*/delete*/
 // toggle* e os arrays de dados retornados abaixo. ----
 function useGcData(session) {
+  const [expenseCategories, setExpenseCategories] = useState(GC_IS_LOCAL ? GC_DEMO_DATA.expenseCategories : []);
   const [incomeSources, setIncomeSources] = useState(GC_IS_LOCAL ? GC_DEMO_DATA.incomeSources : []);
   const [incomeEntries, setIncomeEntries] = useState(GC_IS_LOCAL ? GC_DEMO_DATA.incomeEntries : []);
   const [incomeProjections, setIncomeProjections] = useState(GC_IS_LOCAL ? GC_DEMO_DATA.incomeProjections : []);
@@ -497,7 +507,8 @@ function useGcData(session) {
     if (GC_IS_LOCAL || !gcFirestore) { setLoading(false); return; }
     setLoading(true);
     try {
-      const [sources, entries, projections, templates, instRaw, snapshots, wishlist] = await Promise.all([
+      const [categories, sources, entries, projections, templates, instRaw, snapshots, wishlist] = await Promise.all([
+        gcFetchAll(session, "expense_categories"),
         gcFetchAll(session, "income_sources"),
         gcFetchAll(session, "income_entries"),
         gcFetchAll(session, "income_projections"),
@@ -506,6 +517,15 @@ function useGcData(session) {
         gcFetchAll(session, "investment_snapshots"),
         gcFetchAll(session, "wishlist_items"),
       ]);
+      // Instalação nova (sem nenhuma categoria ainda): semeia as 5 categorias
+      // padrão uma única vez, pra tela de Despesas não nascer vazia.
+      let categoriasFinais = categories;
+      if (!categoriasFinais.length) {
+        try {
+          await gcUpsertMany(session, "expense_categories", GC_EXPENSE_GROUPS_SEED);
+          categoriasFinais = GC_EXPENSE_GROUPS_SEED;
+        } catch (seedErr) { console.error(seedErr); }
+      }
       let instances = instRaw;
       // Geração lazy: cria só as instâncias que faltam até o mês atual e já
       // grava de volta (batch), pra não repetir o cálculo em todo load.
@@ -518,6 +538,7 @@ function useGcData(session) {
           console.error(genErr);
         }
       }
+      setExpenseCategories(categoriasFinais);
       setIncomeSources(sources);
       setIncomeEntries(entries);
       setIncomeProjections(projections);
@@ -534,6 +555,25 @@ function useGcData(session) {
   };
 
   useEffect(() => { loadData(); }, [session]);
+
+  const saveExpenseCategory = async (categoria) => {
+    setExpenseCategories(prev => prev.some(c => c.id === categoria.id) ? prev.map(c => c.id === categoria.id ? categoria : c) : [...prev, categoria]);
+    if (GC_IS_LOCAL) return true;
+    try { await gcUpsertOne(session, "expense_categories", categoria); return true; }
+    catch (err) { console.error(err); setError(gcWriteErrorMsg(err, "salvar a categoria")); await loadData(); return false; }
+  };
+
+  // Não deixa apagar uma categoria em uso (recorrência ou despesa lançada) -
+  // evita "grupo" órfão sem rótulo aparecendo na lista. O chamador (tela)
+  // decide o aviso pt-BR mostrado ao usuário quando isso retorna false.
+  const deleteExpenseCategory = async (id) => {
+    const emUso = expenseTemplates.some(t => t.grupo === id) || expenseInstances.some(i => i.grupo === id);
+    if (emUso) return false;
+    setExpenseCategories(prev => prev.filter(c => c.id !== id));
+    if (GC_IS_LOCAL) return true;
+    try { await gcDeleteOne(session, "expense_categories", id); return true; }
+    catch (err) { console.error(err); setError(gcWriteErrorMsg(err, "excluir a categoria")); await loadData(); return false; }
+  };
 
   const saveIncomeSource = async (source) => {
     setIncomeSources(prev => prev.some(s => s.id === source.id) ? prev.map(s => s.id === source.id ? source : s) : [...prev, source]);
@@ -649,8 +689,9 @@ function useGcData(session) {
   };
 
   return {
-    incomeSources, incomeEntries, incomeProjections, expenseTemplates, expenseInstances, investmentSnapshots, wishlistItems,
+    expenseCategories, incomeSources, incomeEntries, incomeProjections, expenseTemplates, expenseInstances, investmentSnapshots, wishlistItems,
     loading, error, dismissError: () => setError(null),
+    saveExpenseCategory, deleteExpenseCategory,
     saveIncomeSource, deleteIncomeSource, saveIncomeEntry, deleteIncomeEntry, saveIncomeProjection,
     saveExpenseTemplate, deleteExpenseTemplate, saveExpenseInstance, deleteExpenseInstance, toggleExpenseInstancePago,
     saveInvestmentSnapshot, saveWishlistItem, deleteWishlistItem, toggleWishlistComprado,
@@ -914,8 +955,8 @@ function GcIncomeProjectionForm({ ano, initial, onSave, onClose }) {
    compras) agrupada por categoria, com checkbox de "pago" inline. É aqui
    que vive a ação de marcar uma conta como paga (sem precisar abrir modal).
 ----------------------------------------------------------------*/
-function GcDespesas({ instances, competencia, onCompetenciaChange, onTogglePago, onEditInstance }) {
-  const grupos = gcGroupInstances(instances, competencia);
+function GcDespesas({ instances, categories, competencia, onCompetenciaChange, onTogglePago, onEditInstance, onManageCategories }) {
+  const grupos = gcGroupInstances(instances, competencia, categories);
   const totalMes = gcMonthInstancesTotal(instances, competencia);
   const custoMes = gcCustoMes(instances, competencia);
 
@@ -932,10 +973,13 @@ function GcDespesas({ instances, competencia, onCompetenciaChange, onTogglePago,
         </div>
       </div>
 
-      <div className="gc-month-switch">
-        <button type="button" className="lb-icon-btn" onClick={() => onCompetenciaChange(gcShiftCompetencia(competencia, -1))} aria-label="Mês anterior"><ChevronLeft size={20} /></button>
-        <span className="gc-month-label">{competenciaLabel(competencia)}</span>
-        <button type="button" className="lb-icon-btn" onClick={() => onCompetenciaChange(gcShiftCompetencia(competencia, 1))} aria-label="Próximo mês"><ChevronRight size={20} /></button>
+      <div className="gc-despesas-toolbar">
+        <div className="gc-month-switch">
+          <button type="button" className="lb-icon-btn" onClick={() => onCompetenciaChange(gcShiftCompetencia(competencia, -1))} aria-label="Mês anterior"><ChevronLeft size={20} /></button>
+          <span className="gc-month-label">{competenciaLabel(competencia)}</span>
+          <button type="button" className="lb-icon-btn" onClick={() => onCompetenciaChange(gcShiftCompetencia(competencia, 1))} aria-label="Próximo mês"><ChevronRight size={20} /></button>
+        </div>
+        <button type="button" className="lb-icon-btn gc-despesas-toolbar-cat" onClick={onManageCategories} aria-label="Gerenciar categorias"><Settings size={18} /></button>
       </div>
 
       {grupos.length === 0 ? (
@@ -1519,31 +1563,33 @@ function GcDashboard({ incomeEntries, expenseInstances, investmentSnapshots, ano
       </div>
 
       <div className="gc-dashboard-section">
-        <h3 className="gc-section-title">Fluxo de Caixa {ano}</h3>
+        <h3 className="gc-section-title">Fluxo de Caixa</h3>
         <div className="gc-cashflow-wrap">
           <table className="gc-cashflow-table">
             <thead>
-              <tr><th></th>{MONTH_LABELS.map(m => <th key={m}>{m}</th>)}<th>Total Anual</th></tr>
+              <tr>
+                <th></th>
+                <th>Receita</th>
+                <th>Gastos</th>
+                <th>Saldo líquido</th>
+                <th>Investimentos</th>
+              </tr>
             </thead>
             <tbody>
-              <tr>
-                <td>Receita</td>
-                {receitaPorMes.map((r, i) => <td key={i} className="gc-money">{gcFmtMoney(r.total)}</td>)}
+              {MONTH_LABELS.map((m, i) => (
+                <tr key={m}>
+                  <td>{m}</td>
+                  <td className="gc-money">{gcFmtMoney(receitaPorMes[i].total)}</td>
+                  <td className="gc-money">{gcFmtMoney(custoPorMes[i].total)}</td>
+                  <td className={"gc-money" + (saldoLiquidoPorMes[i].total < 0 ? " gc-num-red" : "")}>{gcFmtMoney(saldoLiquidoPorMes[i].total)}</td>
+                  <td className="gc-money">{gcFmtMoney(investimentosPorMes[i].total)}</td>
+                </tr>
+              ))}
+              <tr className="gc-cashflow-total">
+                <td>Total</td>
                 <td className="gc-money">{gcFmtMoney(faturamentoAnual)}</td>
-              </tr>
-              <tr>
-                <td>Gastos</td>
-                {custoPorMes.map((c, i) => <td key={i} className="gc-money">{gcFmtMoney(c.total)}</td>)}
                 <td className="gc-money">{gcFmtMoney(custoDeVidaAnual)}</td>
-              </tr>
-              <tr>
-                <td>Saldo líquido</td>
-                {saldoLiquidoPorMes.map((s, i) => <td key={i} className={"gc-money" + (s.total < 0 ? " gc-num-red" : "")}>{gcFmtMoney(s.total)}</td>)}
                 <td className="gc-money">{gcFmtMoney(faturamentoAnual - custoDeVidaAnual)}</td>
-              </tr>
-              <tr>
-                <td>Investimentos</td>
-                {investimentosPorMes.map((s, i) => <td key={i} className="gc-money">{gcFmtMoney(s.total)}</td>)}
                 <td></td>
               </tr>
             </tbody>
@@ -1578,8 +1624,9 @@ function gcInitialReceitasCompetencia() {
 
 function App({ session }) {
   const {
-    incomeSources, incomeEntries, incomeProjections, expenseTemplates, expenseInstances, investmentSnapshots, wishlistItems,
+    expenseCategories, incomeSources, incomeEntries, incomeProjections, expenseTemplates, expenseInstances, investmentSnapshots, wishlistItems,
     loading, error, dismissError,
+    saveExpenseCategory, deleteExpenseCategory,
     saveIncomeSource, deleteIncomeSource, saveIncomeEntry, saveIncomeProjection,
     saveExpenseTemplate, deleteExpenseTemplate, saveExpenseInstance, deleteExpenseInstance, toggleExpenseInstancePago,
     saveInvestmentSnapshot, saveWishlistItem, deleteWishlistItem, toggleWishlistComprado,
@@ -1600,6 +1647,7 @@ function App({ session }) {
   const [wishlistForm, setWishlistForm] = useState(null);
   const [despesasFabMenu, setDespesasFabMenu] = useState(false);
   const [dashboardFabMenu, setDashboardFabMenu] = useState(false);
+  const [categoriesModal, setCategoriesModal] = useState(false);
   const [importing, setImporting] = useState(false);
 
   // ---- Importação inicial (temporária): escreve os mesmos dados usados no
@@ -1708,12 +1756,13 @@ function App({ session }) {
             />
           ) : subTab === "despesas" ? (
             <GcDespesas
-              instances={expenseInstances} competencia={despesasComp} onCompetenciaChange={setDespesasComp}
+              instances={expenseInstances} categories={expenseCategories} competencia={despesasComp} onCompetenciaChange={setDespesasComp}
               onTogglePago={toggleExpenseInstancePago}
               onEditInstance={(inst) => setInstanceForm({ initial: inst })}
+              onManageCategories={() => setCategoriesModal(true)}
             />
           ) : subTab === "recorrencias" ? (
-            <GcRecorrencias templates={expenseTemplates} onEdit={(t) => setTemplateForm({ initial: t })} />
+            <GcRecorrencias templates={expenseTemplates} categories={expenseCategories} onEdit={(t) => setTemplateForm({ initial: t })} />
           ) : subTab === "investimentos" ? (
             <GcInvestimentos
               snapshots={investmentSnapshots} competencia={investimentosComp} onCompetenciaChange={setInvestimentosComp}
@@ -1771,6 +1820,14 @@ function App({ session }) {
             </div>
           </Modal>
         )}
+        {categoriesModal && (
+          <GcManageCategoriesModal
+            categories={expenseCategories}
+            onSave={saveExpenseCategory}
+            onDelete={deleteExpenseCategory}
+            onClose={() => setCategoriesModal(false)}
+          />
+        )}
         {despesasFabMenu && (
           <Modal title="O que você quer lançar?" onClose={() => setDespesasFabMenu(false)}>
             <div className="gc-fab-menu">
@@ -1786,10 +1843,10 @@ function App({ session }) {
           </Modal>
         )}
         {instanceForm && (
-          <GcExpenseInstanceForm initial={instanceForm.initial} competencia={despesasComp} onSave={saveExpenseInstance} onDelete={deleteExpenseInstance} onClose={() => setInstanceForm(null)} />
+          <GcExpenseInstanceForm initial={instanceForm.initial} categories={expenseCategories} competencia={despesasComp} onSave={saveExpenseInstance} onDelete={deleteExpenseInstance} onClose={() => setInstanceForm(null)} />
         )}
         {templateForm && (
-          <GcExpenseTemplateForm initial={templateForm.initial} onSave={saveExpenseTemplate} onDelete={deleteExpenseTemplate} onClose={() => setTemplateForm(null)} />
+          <GcExpenseTemplateForm initial={templateForm.initial} categories={expenseCategories} onSave={saveExpenseTemplate} onDelete={deleteExpenseTemplate} onClose={() => setTemplateForm(null)} />
         )}
         {snapshotForm && (
           <GcInvestmentSnapshotForm initialCompetencia={snapshotForm.initialCompetencia} snapshots={investmentSnapshots} onSave={saveInvestmentSnapshot} onClose={() => setSnapshotForm(null)} />
@@ -2010,6 +2067,8 @@ div.gc-statcard { cursor: default; }
 .gc-statcard-cap { font-family: 'Space Grotesk', sans-serif; font-size: 10px; text-transform: uppercase; letter-spacing: .4px; color: var(--gc-ink-soft); line-height: 1.3; }
 
 .gc-month-switch { display: flex; align-items: center; justify-content: center; gap: var(--sp-3); }
+.gc-despesas-toolbar { display: flex; align-items: center; justify-content: center; position: relative; }
+.gc-despesas-toolbar-cat { position: absolute; right: 0; }
 .gc-month-label { font-family: 'Playfair Display', serif; font-weight: 700; font-size: 17px; min-width: 130px; text-align: center; }
 
 .gc-pill { display: inline-flex; align-items: center; padding: 3px 10px; border-radius: var(--radius-pill); border: 1px solid var(--gc-accent); color: var(--gc-accent); font-family: 'Space Grotesk', sans-serif; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .3px; flex-shrink: 0; }
@@ -2087,6 +2146,7 @@ button.gc-list-row-btn:hover { background: var(--gc-surface-2); }
 .gc-cashflow-table td:first-child, .gc-cashflow-table th:first-child {
   text-align: left; font-weight: 700; position: sticky; left: 0; background: #fff; z-index: 1;
 }
+.gc-cashflow-total td { font-weight: 700; border-top: 1px solid var(--gc-line); }
 
 /* ---- Shell (topbar, sidebar, bottomnav, login) ---- */
 .gc-app { min-height: 100vh; display: flex; flex-direction: column; padding-top: var(--gc-topbar-h); padding-bottom: calc(78px + env(safe-area-inset-bottom, var(--gc-sab))); }
