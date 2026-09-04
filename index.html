@@ -239,6 +239,46 @@ function gcPoderDeCompra(saldoEmCaixa) {
   return (saldoEmCaixa / GC_PODER_COMPRA_BASE) * 100;
 }
 
+// ---- Fórmulas do Dashboard (funções puras) ----
+function gcMonthsOfYear(ano) {
+  return Array.from({ length: 12 }, (_, i) => `${ano}-${String(i + 1).padStart(2, "0")}`);
+}
+function gcReceitaPorMes(incomeEntries, ano) {
+  return gcMonthsOfYear(ano).map(mes => ({ mes, total: gcMonthEntriesTotal(incomeEntries, mes) }));
+}
+// "Gastos" no Dashboard usa o custo pós-divisão (mesma fórmula do Custo de
+// Vida) — uma conta dividida com terceiro não deveria inflar o fluxo de
+// caixa pessoal, mesmo comportamento que a planilha original tinha ao
+// zerar as células "bruno".
+function gcCustoPorMes(expenseInstances, ano) {
+  return gcMonthsOfYear(ano).map(mes => ({ mes, total: gcCustoMes(expenseInstances, mes) }));
+}
+function gcSaldoLiquidoPorMes(receitaPorMes, custoPorMes) {
+  return receitaPorMes.map((r, i) => ({ mes: r.mes, total: r.total - custoPorMes[i].total }));
+}
+function gcFaturamentoAnual(incomeEntries, ano) {
+  return gcReceitaPorMes(incomeEntries, ano).reduce((s, m) => s + m.total, 0);
+}
+function gcCustoDeVidaAnual(expenseInstances, ano) {
+  return gcCustoPorMes(expenseInstances, ano).reduce((s, m) => s + m.total, 0);
+}
+function gcTaxaDePoupanca(faturamentoAnual, custoDeVidaAnual) {
+  return faturamentoAnual > 0 ? (faturamentoAnual - custoDeVidaAnual) / faturamentoAnual : 0;
+}
+function gcMediaMensalDeGastos(custoDeVidaAnual) {
+  return custoDeVidaAnual / 12;
+}
+// Investimentos é um SALDO (net worth), não um fluxo: um mês sem snapshot
+// novo carrega o último valor conhecido adiante (mesmo raciocínio de
+// gcSaldoEmCaixa, mês a mês).
+function gcInvestimentosPorMes(snapshots, ano) {
+  const ordenados = snapshots.slice().sort((a, b) => a.competencia.localeCompare(b.competencia));
+  return gcMonthsOfYear(ano).map(mes => {
+    const conhecido = ordenados.filter(s => s.competencia <= mes).slice(-1)[0];
+    return { mes, total: conhecido ? conhecido.saldo : 0 };
+  });
+}
+
 // ---- Fórmulas de Lista de Sonhos (funções puras) ----
 const GC_WISHLIST_CATEGORIES = ["CASA", "LUNA", "VESTUÁRIO", "TECH", "CARE", "MISC"];
 // Agrupa por categoria (só os ainda não comprados contam no subtotal/total,
@@ -1403,6 +1443,141 @@ function GcWishlistItemForm({ initial, onSave, onDelete, onClose }) {
 }
 
 /* ---------------------------------------------------------------
+   TELA: DASHBOARD (Fase 5) — big numbers + fluxo de caixa + gráficos, tudo
+   derivado das outras telas (nenhum dado próprio). Gráficos em SVG/CSS
+   puro, sem biblioteca (mesmo espírito do GgColumns do Guitchelin).
+----------------------------------------------------------------*/
+function GcColumnsGrouped({ items }) {
+  const max = Math.max(...items.flatMap(i => [i.a, i.b]), 1);
+  return (
+    <div className="gc-cols">
+      {items.map(it => (
+        <div className="gc-col" key={it.label}>
+          <div className="gc-col-track gc-col-track-grouped">
+            <div className="gc-col-fill gc-col-fill-a" style={{ height: it.a ? Math.max((it.a / max) * 100, 4) + "%" : "0%" }} />
+            <div className="gc-col-fill gc-col-fill-b" style={{ height: it.b ? Math.max((it.b / max) * 100, 4) + "%" : "0%" }} />
+          </div>
+          <span className="gc-col-label">{it.label}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function GcAreaChart({ items }) {
+  const max = Math.max(...items.map(i => i.value), 1);
+  const w = 300, h = 120, pad = 6;
+  const stepX = items.length > 1 ? (w - pad * 2) / (items.length - 1) : 0;
+  const pontos = items.map((it, i) => [pad + i * stepX, pad + (h - pad * 2) * (1 - it.value / max)]);
+  const linha = pontos.map((p, i) => (i === 0 ? "M" : "L") + p[0].toFixed(1) + " " + p[1].toFixed(1)).join(" ");
+  const area = `${linha} L ${pontos[pontos.length - 1][0].toFixed(1)} ${h - pad} L ${pontos[0][0].toFixed(1)} ${h - pad} Z`;
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} className="gc-area-chart" preserveAspectRatio="none">
+      <path d={area} className="gc-area-fill" />
+      <path d={linha} className="gc-area-line" fill="none" />
+    </svg>
+  );
+}
+
+function GcDashboard({ incomeEntries, expenseInstances, investmentSnapshots, ano, onAnoChange }) {
+  const receitaPorMes = gcReceitaPorMes(incomeEntries, ano);
+  const custoPorMes = gcCustoPorMes(expenseInstances, ano);
+  const saldoLiquidoPorMes = gcSaldoLiquidoPorMes(receitaPorMes, custoPorMes);
+  const investimentosPorMes = gcInvestimentosPorMes(investmentSnapshots, ano);
+  const faturamentoAnual = gcFaturamentoAnual(incomeEntries, ano);
+  const custoDeVidaAnual = gcCustoDeVidaAnual(expenseInstances, ano);
+  const taxaDePoupanca = gcTaxaDePoupanca(faturamentoAnual, custoDeVidaAnual);
+  const mediaMensalDeGastos = gcMediaMensalDeGastos(custoDeVidaAnual);
+  const saldoEmCaixa = gcSaldoEmCaixa(investmentSnapshots);
+  const poderDeCompra = gcPoderDeCompra(saldoEmCaixa);
+  const fmtPct = (v) => v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + "%";
+
+  return (
+    <div className="gc-screen">
+      <div className="gc-year-switch">
+        <button type="button" className="lb-icon-btn" onClick={() => onAnoChange(String(Number(ano) - 1))} aria-label="Ano anterior"><ChevronLeft size={20} /></button>
+        <span className="gc-month-label">{ano}</span>
+        <button type="button" className="lb-icon-btn" onClick={() => onAnoChange(String(Number(ano) + 1))} aria-label="Próximo ano"><ChevronRight size={20} /></button>
+      </div>
+
+      <div className="gc-statcards gc-statcards-3">
+        <div className="gc-statcard">
+          <span className="gc-statcard-num gc-money">{gcFmtMoney(faturamentoAnual)}</span>
+          <span className="gc-statcard-cap">Faturamento Anual</span>
+        </div>
+        <div className="gc-statcard">
+          <span className="gc-statcard-num gc-money">{gcFmtMoney(saldoEmCaixa)}</span>
+          <span className="gc-statcard-cap">Saldo em Caixa</span>
+        </div>
+        <div className="gc-statcard">
+          <span className="gc-statcard-num">{fmtPct(poderDeCompra)}</span>
+          <span className="gc-statcard-cap">Poder de Compra</span>
+        </div>
+        <div className="gc-statcard">
+          <span className="gc-statcard-num gc-money gc-num-red">{gcFmtMoney(custoDeVidaAnual)}</span>
+          <span className="gc-statcard-cap">Custo de Vida Anual</span>
+        </div>
+        <div className="gc-statcard">
+          <span className="gc-statcard-num">{fmtPct(taxaDePoupanca * 100)}</span>
+          <span className="gc-statcard-cap">Taxa de Poupança</span>
+        </div>
+        <div className="gc-statcard">
+          <span className="gc-statcard-num gc-money">{gcFmtMoney(mediaMensalDeGastos)}</span>
+          <span className="gc-statcard-cap">Média Mensal de Gastos</span>
+        </div>
+      </div>
+
+      <div className="gc-dashboard-section">
+        <h3 className="gc-section-title">Receita × Gastos</h3>
+        <GcColumnsGrouped items={receitaPorMes.map((r, i) => ({ label: MONTH_LABELS[i], a: r.total, b: custoPorMes[i].total }))} />
+        <div className="gc-legend">
+          <span className="gc-legend-item"><span className="gc-legend-swatch gc-legend-a" /> Receita</span>
+          <span className="gc-legend-item"><span className="gc-legend-swatch gc-legend-b" /> Gastos</span>
+        </div>
+      </div>
+
+      <div className="gc-dashboard-section">
+        <h3 className="gc-section-title">Evolução dos Investimentos</h3>
+        <GcAreaChart items={investimentosPorMes.map((s, i) => ({ label: MONTH_LABELS[i], value: s.total }))} />
+      </div>
+
+      <div className="gc-dashboard-section">
+        <h3 className="gc-section-title">Fluxo de Caixa {ano}</h3>
+        <div className="gc-cashflow-wrap">
+          <table className="gc-cashflow-table">
+            <thead>
+              <tr><th></th>{MONTH_LABELS.map(m => <th key={m}>{m}</th>)}<th>Total Anual</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Receita</td>
+                {receitaPorMes.map((r, i) => <td key={i} className="gc-money">{gcFmtMoney(r.total)}</td>)}
+                <td className="gc-money">{gcFmtMoney(faturamentoAnual)}</td>
+              </tr>
+              <tr>
+                <td>Gastos</td>
+                {custoPorMes.map((c, i) => <td key={i} className="gc-money">{gcFmtMoney(c.total)}</td>)}
+                <td className="gc-money">{gcFmtMoney(custoDeVidaAnual)}</td>
+              </tr>
+              <tr>
+                <td>Saldo líquido</td>
+                {saldoLiquidoPorMes.map((s, i) => <td key={i} className={"gc-money" + (s.total < 0 ? " gc-num-red" : "")}>{gcFmtMoney(s.total)}</td>)}
+                <td className="gc-money">{gcFmtMoney(faturamentoAnual - custoDeVidaAnual)}</td>
+              </tr>
+              <tr>
+                <td>Investimentos</td>
+                {investimentosPorMes.map((s, i) => <td key={i} className="gc-money">{gcFmtMoney(s.total)}</td>)}
+                <td></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------
    SHELL DO APP (topbar, gaveta lateral, nav inferior + FAB contextual).
    Fase 0: telas ainda são placeholders (EmptyState) — cada uma vira de
    verdade na fase correspondente (ver CLAUDE.md > Roadmap).
@@ -1446,6 +1621,7 @@ function App({ session }) {
   const [receitasComp, setReceitasComp] = useState(gcInitialReceitasCompetencia);
   const [despesasComp, setDespesasComp] = useState(competenciaAtual);
   const [investimentosComp, setInvestimentosComp] = useState(competenciaAtual);
+  const [dashboardAno, setDashboardAno] = useState(() => competenciaAtual().slice(0, 4));
   const [sourceForm, setSourceForm] = useState(null);
   const [projectionForm, setProjectionForm] = useState(null);
   const [instanceForm, setInstanceForm] = useState(null);
@@ -1513,6 +1689,11 @@ function App({ session }) {
         <main className="gc-main">
           {loading ? (
             <p className="lb-hint gc-empty">Carregando...</p>
+          ) : subTab === "dashboard" ? (
+            <GcDashboard
+              incomeEntries={incomeEntries} expenseInstances={expenseInstances} investmentSnapshots={investmentSnapshots}
+              ano={dashboardAno} onAnoChange={setDashboardAno}
+            />
           ) : subTab === "receitas" ? (
             <GcReceitas
               sources={incomeSources} entries={incomeEntries} projections={incomeProjections}
@@ -1540,11 +1721,7 @@ function App({ session }) {
             <EmptyState
               icon={current ? current.icon(40) : <BarChart3 size={40} />}
               title={current ? current.label : "Guitcoin"}
-              message={
-                subTab === "dashboard"
-                  ? "Big numbers, fluxo de caixa e gráficos chegam na Fase 5."
-                  : `Essa tela ainda está em construção (ver Roadmap no CLAUDE.md).`
-              }
+              message="Essa tela ainda está em construção (ver Roadmap no CLAUDE.md)."
             />
           )}
         </main>
@@ -1859,8 +2036,43 @@ button.gc-list-row-btn:hover { background: var(--gc-surface-2); }
 .gc-fab-option-txt strong { font-family: 'Space Grotesk', sans-serif; font-size: 14.5px; }
 .gc-fab-option-txt small { color: var(--gc-ink-soft); font-size: 12.5px; }
 
+/* ---- Dashboard: statcards-3, gráficos SVG/CSS puro, fluxo de caixa ---- */
+.gc-statcards-3 { grid-template-columns: repeat(3, 1fr); }
+.gc-year-switch { display: flex; align-items: center; justify-content: center; gap: var(--sp-3); }
+
+.gc-dashboard-section { display: flex; flex-direction: column; gap: var(--sp-3); }
+.gc-section-title { margin: 0; font-family: 'Playfair Display', serif; font-weight: 700; font-size: 16px; color: var(--gc-ink); }
+
+.gc-cols { display: flex; align-items: flex-end; height: 140px; gap: 4px; }
+.gc-col { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; height: 100%; }
+.gc-col-track { flex: 1; width: 100%; display: flex; align-items: flex-end; justify-content: center; }
+.gc-col-fill { width: 60%; max-width: 22px; border-radius: 3px 3px 0 0; background: linear-gradient(180deg, var(--gc-accent), var(--gc-gold)); }
+.gc-col-label { margin-top: 6px; font-family: 'Space Grotesk', sans-serif; font-size: 10px; color: var(--gc-ink-soft); }
+.gc-col-track-grouped { gap: 2px; }
+.gc-col-fill-a { max-width: 10px; background: var(--gc-accent); }
+.gc-col-fill-b { max-width: 10px; background: var(--gc-red); }
+
+.gc-legend { display: flex; justify-content: center; gap: var(--sp-4); }
+.gc-legend-item { display: flex; align-items: center; gap: 6px; font-family: 'Space Grotesk', sans-serif; font-size: 12px; color: var(--gc-ink-soft); }
+.gc-legend-swatch { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+.gc-legend-a { background: var(--gc-accent); }
+.gc-legend-b { background: var(--gc-red); }
+
+.gc-area-chart { width: 100%; height: 120px; display: block; }
+.gc-area-fill { fill: color-mix(in srgb, var(--gc-accent) 22%, transparent); }
+.gc-area-line { stroke: var(--gc-accent); stroke-width: 2.5; }
+
+.gc-cashflow-wrap { overflow-x: auto; border: 1px solid var(--gc-line); border-radius: var(--radius-md); }
+.gc-cashflow-table { border-collapse: collapse; width: 100%; font-family: 'Space Grotesk', sans-serif; font-size: 11.5px; white-space: nowrap; }
+.gc-cashflow-table th, .gc-cashflow-table td { padding: 8px 10px; text-align: right; border-bottom: 1px solid var(--gc-line); }
+.gc-cashflow-table th { color: var(--gc-ink-soft); font-weight: 600; text-transform: uppercase; font-size: 10px; letter-spacing: .3px; }
+.gc-cashflow-table tr:last-child td { border-bottom: none; }
+.gc-cashflow-table td:first-child, .gc-cashflow-table th:first-child {
+  text-align: left; font-weight: 700; position: sticky; left: 0; background: #fff; z-index: 1;
+}
+
 /* ---- Shell (topbar, sidebar, bottomnav, login) ---- */
-.gc-app { min-height: 100vh; padding-top: var(--gc-topbar-h); padding-bottom: calc(78px + env(safe-area-inset-bottom, var(--gc-sab))); }
+.gc-app { min-height: 100vh; display: flex; flex-direction: column; padding-top: var(--gc-topbar-h); padding-bottom: calc(78px + env(safe-area-inset-bottom, var(--gc-sab))); }
 .gc-topbar {
   position: fixed; top: 0; left: 0; right: 0; z-index: 20; height: var(--gc-topbar-h);
   display: flex; align-items: center; gap: var(--sp-3);
@@ -1897,7 +2109,7 @@ button.gc-list-row-btn:hover { background: var(--gc-surface-2); }
 .gc-error-banner { display: flex; align-items: center; gap: var(--sp-2); background: #FBECEC; color: var(--gc-red); font-family: 'Space Grotesk', sans-serif; font-size: 13px; padding: 8px var(--sp-4); }
 .gc-error-close { margin-left: auto; background: none; border: none; color: inherit; cursor: pointer; display: flex; padding: 2px; }
 
-.gc-main { padding: var(--sp-5); max-width: 720px; margin: 0 auto; }
+.gc-main { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: var(--sp-5); max-width: 720px; margin: 0 auto; width: 100%; }
 
 .gc-bottomnav { position: fixed; bottom: 0; left: 0; right: 0; z-index: 15; display: flex; align-items: center; justify-content: space-around; padding: 8px 8px calc(8px + env(safe-area-inset-bottom, var(--gc-sab))); background: #fff; border-top: 1px solid var(--gc-line); }
 .gc-navbtn { display: flex; flex-direction: column; align-items: center; gap: 2px; background: none; border: none; color: var(--gc-ink-soft); font-family: 'Space Grotesk', sans-serif; font-weight: 600; font-size: 11px; padding: 6px 18px; cursor: pointer; }

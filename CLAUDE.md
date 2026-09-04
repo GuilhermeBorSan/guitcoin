@@ -9,6 +9,10 @@ de arquivo único: [Guitchelin](https://github.com/GuilhermeBorSan/guitchelin)
 (diário de filmes). Dono: Gui. Prefere pt-BR, pedidos curtos e iteração
 rápida, e quer confirmação antes de mudanças estruturais grandes. Plano
 completo de estruturação em `C:\Users\gui30\.claude\plans\c-users-gui30-downloads-finan-as-pdf-go-imperative-lamport.md`.
+**As 6 fases do plano (shell/auth, Receitas, Despesas+Recorrências,
+Investimentos, Lista de Sonhos, Dashboard) estão todas implementadas e
+testadas em modo demo** — falta só provisionar o Supabase de produção (ver
+Roadmap) pra sair do modo demo local.
 
 ## Onde está o código
 - App inteiro em UM arquivo estático: `index.html` na raiz. SEM etapa de
@@ -96,6 +100,14 @@ reajuste de preço, ex. Disney+ subindo mês a mês).
 - Marca: `GcCoin` (SVG círculo + cifrão), usada no topbar e como ícone de
   abrir/fechar a gaveta lateral (outline fechado, preenchido aberto — mesmo
   padrão do `GgFlower` do Guitchelin).
+- `.gc-app` é flex-column e `.gc-main` é `flex:1; overflow-y:auto`
+  (descoberto faltando na Fase 5, quando o Dashboard passou a ter conteúdo
+  mais alto que a tela) — é o que deixa a topbar/nav inferior fixas
+  enquanto só o conteúdo rola, mesmo padrão do `.gg-main` do Guitchelin.
+  Não remover: sem isso, telas compridas (Despesas com muitas linhas,
+  Dashboard) ficam cortadas sem aviso dentro do preview local de iPhone
+  (em produção real o `body` ainda rola, mas o efeito visual de
+  topbar/nav fixos se perde).
 - Navegação: nav inferior (`.gc-bottomnav`) = Dashboard · + (FAB contextual)
   · Despesas (Despesas é o uso diário — marcar contas como pagas — por isso
   fica fixa; Dashboard é a tela de entrada). Gaveta lateral (`.gc-sidebar`)
@@ -146,7 +158,21 @@ reajuste de preço, ex. Disney+ subindo mês a mês).
 - ~~Fase 4 — Lista de Sonhos~~ ✅ feito: `GcSonhos` (agrupada por categoria,
   subtotal + total só dos itens não comprados), `GcWishlistItemForm`
   (categoria como texto livre com sugestões via `<datalist>`).
-- Fase 5 — Dashboard + Análises (big numbers, fluxo de caixa, gráficos).
+- ~~Fase 5 — Dashboard + Análises~~ ✅ feito: `GcDashboard` (6 statcards,
+  gráfico de barras 2 séries Receita×Gastos via `GcColumnsGrouped`, gráfico
+  de área "Evolução dos Investimentos" via `GcAreaChart`, tabela de Fluxo de
+  Caixa 12 meses + Total Anual com 1ª coluna sticky), seletor de ano,
+  funções puras `gcReceitaPorMes`/`gcCustoPorMes`/`gcFaturamentoAnual`/
+  `gcCustoDeVidaAnual`/`gcTaxaDePoupanca`/`gcMediaMensalDeGastos`/
+  `gcInvestimentosPorMes`. **Todas as 6 fases do plano de estruturação estão
+  completas.**
+
+## Próximos passos (pós-plano original, sugestões — confirmar com o Gui)
+- Editar/excluir um lançamento de receita específico (`deleteIncomeEntry` já
+  existe no hook, falta UI).
+- Exportar/importar dados (backup em JSON, ou importar extrato bancário).
+- Fechar o mês (marcar competências passadas como "conferidas").
+- Filtro de categoria/período na tela de Despesas (hoje só filtra por mês).
 - Hospedar na Vercel (`guitcoin.vercel.app`), repo estático sem build. URL de
   produção precisa estar em Supabase → Authentication → URL Configuration
   pro login funcionar lá.
@@ -218,9 +244,25 @@ ser provisionado).
   Categoria sugere as 6 categorias seed via autocomplete, mas aceita
   qualquer texto).
 
-A partir da Fase 5, o roteiro de verificação está na seção "Verification
-Plan" do plano de estruturação — recarregar e confirmar persistência via
-Supabase (depois que o projeto for provisionado).
+- **Dashboard (Fase 5)**: abra o Dashboard (tela padrão de entrada) — em
+  modo demo/2026 deve mostrar Faturamento Anual R$38.335,00, Saldo em Caixa
+  R$51.773,18 e Poder de Compra 5.177,32% batendo exatamente com a
+  planilha original (Custo de Vida/Taxa de Poupança/Média Mensal de Gastos
+  vão divergir um pouco da planilha porque os valores de despesas do modo
+  demo são ilustrativos, não uma cópia byte a byte — mas as FÓRMULAS batem:
+  confira que Taxa de Poupança = (Faturamento − Custo de Vida) / Faturamento
+  e Média Mensal = Custo de Vida / 12). Confira o gráfico de barras
+  Receita×Gastos (verde/vermelho, só até o último mês com dado) e o gráfico
+  de área de investimentos (sobe até julho e depois estabiliza — confirma
+  que `gcInvestimentosPorMes` carrega o último saldo conhecido adiante nos
+  meses sem snapshot novo). Role a tabela de Fluxo de Caixa até o fim
+  (rótulo da linha deve ficar fixo/sticky enquanto os meses rolam
+  horizontalmente) e confirme que "Investimentos" também carrega o saldo
+  adiante ali. Troque o ano com as setas.
+- **Persistência (todas as fases)**: depois que o Supabase de produção for
+  provisionado (ver Roadmap), recarregue a página inteira e confirme que
+  tudo sobrevive — teste definitivo de que o ciclo load/upsert do
+  `useGcData` está certo pras 7 tabelas.
 
 ## Convenções de trabalho
 - Responder e escrever UI sempre em pt-BR.
