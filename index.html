@@ -855,6 +855,7 @@ function EmptyState({ icon, title, message, action }) {
 ----------------------------------------------------------------*/
 function GcReceitas({ sources, entries, projections, competencia, onCompetenciaChange, onEditSource, onEditProjection, onSaveEntryValor }) {
   const [mostrarExtrasZerados, setMostrarExtrasZerados] = useState(false);
+  useEffect(() => { setMostrarExtrasZerados(false); }, [competencia]);
   const ano = competencia.slice(0, 4);
   const projection = gcFindIncomeProjection(projections, ano);
   const rendaFixaAnual = gcRendaFixaAnualGarantida(projection);
@@ -2302,6 +2303,8 @@ div.gc-statcard { cursor: default; }
 .gc-row-valor { width: 110px; flex-shrink: 0; text-align: right; padding: 8px 10px; border-radius: var(--radius-pill); border: 1px solid var(--gc-line); font-size: 15px; font-weight: 600; color: var(--gc-ink); }
 .gc-row-valor:focus { outline: 1.5px solid var(--gc-accent); outline-offset: 1px; }
 .gc-list-total { display: flex; align-items: center; justify-content: space-between; padding: var(--sp-3) var(--sp-4); background: var(--gc-surface-2); font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 14.5px; }
+.gc-list-more { display: block; width: 100%; padding: var(--sp-3) var(--sp-4); border: none; border-bottom: 1px solid var(--gc-line); background: none; cursor: pointer; text-align: left; font-family: 'Space Grotesk', sans-serif; font-size: 13px; font-weight: 600; color: var(--gc-accent); }
+.gc-list-more:hover { background: var(--gc-surface-2); }
 
 .gc-statcards-2 { grid-template-columns: repeat(2, 1fr); }
 .gc-statcards-1 { grid-template-columns: 1fr; }
