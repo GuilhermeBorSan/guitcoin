@@ -84,7 +84,6 @@ const FileText = (p) => <IconBase {...p}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0
 const Repeat = (p) => <IconBase {...p}><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></IconBase>;
 const Gift = (p) => <IconBase {...p}><polyline points="20 12 20 22 4 22 4 12"/><rect x="2" y="7" width="20" height="5"/><line x1="12" y1="22" x2="12" y2="7"/><path d="M12 7H7.5a2.5 2.5 0 0 1 0-5C11 2 12 7 12 7z"/><path d="M12 7h4.5a2.5 2.5 0 0 0 0-5C13 2 12 7 12 7z"/></IconBase>;
 const Menu = (p) => <IconBase {...p}><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></IconBase>;
-const Upload = (p) => <IconBase {...p}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></IconBase>;
 const Settings = (p) => <IconBase {...p}><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></IconBase>;
 const Filter = (p) => <IconBase {...p}><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></IconBase>;
 const Utensils = (p) => <IconBase {...p}><path d="M3 2v7c0 1.1.9 2 2 2h4a2 2 0 0 0 2-2V2"/><path d="M7 2v20"/><path d="M21 15V2a5 5 0 0 0-5 5v6c0 1.1.9 2 2 2h3z"/><path d="M21 15v7"/></IconBase>;
@@ -246,6 +245,10 @@ function gcCustoInstance(instance) {
   const pct = instance.minhaParcelaPct != null ? instance.minhaParcelaPct : 100;
   return (instance.valor || 0) * pct / 100;
 }
+function gcCustoTemplate(template) {
+  const pct = template.minhaParcelaPct != null ? template.minhaParcelaPct : 100;
+  return (template.valorPadrao || 0) * pct / 100;
+}
 function gcInstancesForCompetencia(instances, competencia) {
   return instances.filter(i => i.competencia === competencia);
 }
@@ -277,7 +280,13 @@ function gcGroupTemplates(templates, categories) {
     .sort((a, b) => (a.ordem || 0) - (b.ordem || 0))
     .map(g => {
       const items = templates.filter(t => t.grupo === g.id).sort((a, b) => (a.nome || "").localeCompare(b.nome || ""));
-      return { value: g.id, label: g.nome, items };
+      return {
+        value: g.id,
+        label: g.nome,
+        items,
+        total: items.reduce((s, t) => s + (t.valorPadrao || 0), 0),
+        custo: items.reduce((s, t) => s + gcCustoTemplate(t), 0),
+      };
     })
     .filter(g => g.items.length > 0);
 }
@@ -977,10 +986,18 @@ function GcReceitas({ sources, entries, ano, onEditSource, onSaveEntryValor }) {
   const extraYTD = gcExtraAcumuladoYTD(entries, sources, ano, ate);
   const projecaoTotal = gcProjecaoTotalAno(rendaFixaAnual, extraYTD);
   const faturamentoYTD = gcFaturamentoYTD(entries, ano, ate);
-  const meses = gcMonthsOfYear(ano);
+  const atual = competenciaAtual();
+  const meses = gcMonthsOfYear(ano).slice().reverse();
   const ativos = sources.filter(s => s.ativo !== false).slice().sort((a, b) => (a.ordem || 0) - (b.ordem || 0));
   const ativoIds = new Set(ativos.map(s => s.id));
   const entriesAtivos = entries.filter(e => ativoIds.has(e.sourceId));
+  // Oculta meses futuros sem lançamento. Meses passados vazios ficam
+  // visíveis com aviso; o mês atual também (pra dar pra lançar).
+  const mesesVisiveis = meses.filter(comp => {
+    const total = gcMonthEntriesTotal(entriesAtivos, comp);
+    if (total > 0) return true;
+    return comp <= atual;
+  });
 
   const toggleMes = (comp) => {
     setMesExpandido(prev => prev === comp ? null : comp);
@@ -1010,11 +1027,14 @@ function GcReceitas({ sources, entries, ano, onEditSource, onSaveEntryValor }) {
 
       {ativos.length === 0 ? (
         <EmptyState icon={<TrendingUp size={40} />} title="Nenhuma fonte de receita" message="Toque no + pra cadastrar seu salário ou uma renda extra." />
+      ) : mesesVisiveis.length === 0 ? (
+        <EmptyState icon={<TrendingUp size={40} />} title="Nenhum mês com receita" message="Toque no + pra cadastrar um lançamento neste ano." />
       ) : (
         <div className="gc-list gc-receitas-accordion">
-          {meses.map(comp => {
+          {mesesVisiveis.map(comp => {
             const aberto = mesExpandido === comp;
             const totalMes = gcMonthEntriesTotal(entriesAtivos, comp);
+            const vazioPassado = totalMes <= 0 && comp < atual;
             // Extra só aparece no mês se tiver valor > 0 (ex.: Cambridge some
             // nos meses sem aula). Fonte nova via + já nasce com o mês escolhido.
             const listados = ativos.filter(s => s.tipo !== "extra" || (() => {
@@ -1022,16 +1042,22 @@ function GcReceitas({ sources, entries, ano, onEditSource, onSaveEntryValor }) {
               return !!(entry && Number(entry.valor) > 0);
             })());
             return (
-              <div className={"gc-acc-month" + (aberto ? " open" : "")} key={comp}>
+              <div className={"gc-acc-month" + (aberto ? " open" : "") + (vazioPassado ? " gc-acc-month-empty" : "")} key={comp}>
                 <button type="button" className="gc-acc-head" onClick={() => toggleMes(comp)} aria-expanded={aberto}>
                   <span className="gc-acc-head-left">
                     <ChevronDown size={16} className={"gc-acc-chevron" + (aberto ? " open" : "")} />
                     <span className="gc-list-row-title">{MONTH_LABELS[Number(comp.slice(5)) - 1]}</span>
+                    {vazioPassado && <span className="gc-pill gc-pill-red">vazio</span>}
                   </span>
-                  <span className="gc-money gc-acc-total">{totalMes > 0 ? gcFmtMoney(totalMes) : "—"}</span>
+                  <span className={"gc-money gc-acc-total" + (vazioPassado ? " gc-acc-total-empty" : "")}>
+                    {totalMes > 0 ? gcFmtMoney(totalMes) : "—"}
+                  </span>
                 </button>
                 {aberto && (
                   <div className="gc-acc-body">
+                    {vazioPassado && (
+                      <p className="gc-acc-empty-hint">Mês sem lançamentos — confira se faltou registrar a receita.</p>
+                    )}
                     {listados.map(source => {
                       const entry = gcFindIncomeEntry(entries, source.id, comp);
                       return (
@@ -1353,15 +1379,32 @@ function GcExpenseInstanceForm({ initial, categories, competencia, onSave, onDel
 function GcRecorrencias({ templates, categories, onEdit }) {
   const grupos = gcGroupTemplates(templates, categories);
   const orfaos = templates.filter(t => !(categories || []).some(c => c.id === t.grupo));
+  const orfaosTotal = orfaos.reduce((s, t) => s + (t.valorPadrao || 0), 0);
+  const orfaosCusto = orfaos.reduce((s, t) => s + gcCustoTemplate(t), 0);
+  const totalGeral = grupos.reduce((s, g) => s + g.total, 0) + orfaosTotal;
+  const custoGeral = grupos.reduce((s, g) => s + g.custo, 0) + orfaosCusto;
   return (
     <div className="gc-screen">
       {templates.length === 0 ? (
         <EmptyState icon={<Repeat size={40} />} title="Nenhuma recorrência" message="Toque no + pra cadastrar uma conta fixa, assinatura ou cobrança anual." />
       ) : (
         <>
+          <div className="gc-statcards gc-statcards-2">
+            <div className="gc-statcard">
+              <span className="gc-statcard-num gc-money">{gcFmtMoney(totalGeral)}</span>
+              <span className="gc-statcard-cap">Total das recorrências</span>
+            </div>
+            <div className="gc-statcard">
+              <span className="gc-statcard-num gc-money gc-num-red">{gcFmtMoney(custoGeral)}</span>
+              <span className="gc-statcard-cap">Meu custo (após divisão)</span>
+            </div>
+          </div>
           {grupos.map(g => (
             <div className="gc-group" key={g.value}>
-              <div className="gc-group-header"><span>{g.label}</span></div>
+              <div className="gc-group-header">
+                <span>{g.label}</span>
+                <span className="gc-money">{gcFmtMoney(g.total)}</span>
+              </div>
               <div className="gc-list">
                 {g.items.map(t => {
                   const tipo = gcValorTipo(t);
@@ -1388,7 +1431,10 @@ function GcRecorrencias({ templates, categories, onEdit }) {
           ))}
           {orfaos.length > 0 && (
             <div className="gc-group">
-              <div className="gc-group-header"><span>Outros</span></div>
+              <div className="gc-group-header">
+                <span>Outros</span>
+                <span className="gc-money">{gcFmtMoney(orfaosTotal)}</span>
+              </div>
               <div className="gc-list">
                 {orfaos.map(t => (
                   <button type="button" className="gc-list-row gc-list-row-btn" key={t.id} onClick={() => onEdit(t)}>
@@ -2337,7 +2383,6 @@ function App({ session }) {
   const [sonhosFabMenu, setSonhosFabMenu] = useState(false);
   const [topbarFilterOpen, setTopbarFilterOpen] = useState(false);
   const [categoriesModal, setCategoriesModal] = useState(false);
-  const [importing, setImporting] = useState(false);
   const [contaItens, setContaItens] = useState([]);
   const [contaTotalManual, setContaTotalManual] = useState("");
   const [contaComTaxa, setContaComTaxa] = useState(true);
@@ -2364,34 +2409,6 @@ function App({ session }) {
       }
     }
     await toggleWishlistComprado(id);
-  };
-
-  // ---- Importação inicial (temporária): escreve os mesmos dados usados no
-  // modo demo (GC_DEMO_DATA, já validados contra a planilha real do Gui)
-  // direto no Firestore de produção, via os mesmos verbos save* que a UI usa
-  // — não recalcula nem inventa nada. As instâncias recorrentes (mensais)
-  // não entram aqui: nascem sozinhas via gcGenerateMissingInstances assim
-  // que os templates existirem e a página recarregar. Remover este botão e
-  // a função depois que a importação for confirmada. ----
-  const importarDadosIniciais = async () => {
-    if (!window.confirm("Isso vai gravar os dados de exemplo (baseados na sua planilha) na sua conta real do Firebase. Só faça isso uma vez. Continuar?")) return;
-    setImporting(true);
-    try {
-      for (const s of GC_DEMO_DATA.incomeSources) await saveIncomeSource(s);
-      for (const e of GC_DEMO_DATA.incomeEntries) await saveIncomeEntry(e);
-      for (const p of GC_DEMO_DATA.incomeProjections) await saveIncomeProjection(p);
-      for (const t of GC_DEMO_DATA.expenseTemplates) await saveExpenseTemplate(t);
-      for (const i of GC_DEMO_DATA.expenseInstancesAvulsas) await saveExpenseInstance(i);
-      for (const sn of GC_DEMO_DATA.investmentSnapshots) await saveInvestmentSnapshot(sn);
-      for (const w of GC_DEMO_DATA.wishlistItems) await saveWishlistItem(w);
-      for (const ws of GC_DEMO_DATA.wishlistSavingsSnapshots) await saveWishlistSavingsSnapshot(ws);
-      window.alert("Importação concluída! Recarregue a página pra ver os dados (e as recorrências mensais serão geradas automaticamente).");
-    } catch (err) {
-      console.error(err);
-      window.alert("Algo deu errado na importação — veja o console.");
-    } finally {
-      setImporting(false);
-    }
   };
 
   useEffect(() => {
@@ -2436,11 +2453,6 @@ function App({ session }) {
               ))}
             </div>
             <div className="gc-hub-footer">
-              {!GC_IS_LOCAL && (
-                <button type="button" className="gc-hub-action" disabled={importing} onClick={importarDadosIniciais}>
-                  <Upload size={16} /> {importing ? "Importando..." : "Importar dados iniciais"}
-                </button>
-              )}
               <button type="button" className="gc-hub-action danger" onClick={() => { if (!GC_IS_LOCAL && gcAuth) gcAuth.signOut(); }} aria-label="Sair">
                 <LogOut size={16} /> Sair
               </button>
@@ -3011,6 +3023,11 @@ button.gc-list-row-btn:hover { background: var(--gc-surface-2); }
 .gc-acc-chevron { color: var(--gc-ink-soft); flex-shrink: 0; transition: transform .15s ease; transform: rotate(-90deg); }
 .gc-acc-chevron.open { transform: rotate(0deg); }
 .gc-acc-total { font-family: 'Space Grotesk', sans-serif; font-weight: 600; font-size: 14px; font-variant-numeric: tabular-nums; color: var(--gc-ink); }
+.gc-acc-total-empty { color: var(--gc-red); }
+.gc-acc-empty-hint {
+  margin: 0; padding: var(--sp-2) var(--sp-4) var(--sp-2) calc(var(--sp-4) + 24px);
+  font-family: 'Space Grotesk', sans-serif; font-size: 12px; color: var(--gc-red); line-height: 1.35;
+}
 .gc-acc-body { border-top: 1px solid var(--gc-line); background: rgba(0,0,0,.2); }
 .gc-acc-row { padding-left: calc(var(--sp-4) + 24px); }
 .gc-acc-body .gc-list-more { padding-left: calc(var(--sp-4) + 24px); }
