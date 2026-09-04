@@ -2707,7 +2707,7 @@ function GcTripForm({ initial, onSave, onDelete, onClose }) {
           <input type="number" inputMode="numeric" min="1" step="1" value={numDias} onChange={e => setNumDias(e.target.value)} />
         </Field>
 
-        <div className="lb-field wide">
+        <div className="gc-trip-participantes-wrap">
           <span className="lb-field-label">Participantes</span>
           <div className="gc-trip-participantes-form">
             {participantes.map(p => (
@@ -3541,6 +3541,10 @@ div.gc-statcard { cursor: default; }
 .gc-trip-participante-dot { flex-shrink: 0; width: 10px; height: 10px; border-radius: 50%; }
 .gc-trip-participante-nome { flex: 1; min-width: 0; font-family: 'Space Grotesk', sans-serif; font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .gc-trip-participante-vals { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; text-align: right; font-family: 'Space Grotesk', sans-serif; font-size: 12px; }
+/* Wrapper próprio (não .lb-field): evita que `.lb-field input` (width:100%)
+   vaze pros inputs de dentro (cor/nome/disponível), que têm layout próprio
+   — era isso que esticava o seletor de cor virando uma barra. */
+.gc-trip-participantes-wrap { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 5px; font-size: 14.5px; min-width: 0; }
 .gc-trip-participantes-form { display: flex; flex-direction: column; gap: var(--sp-2); margin-bottom: var(--sp-2); }
 .gc-trip-participante-row { display: flex; align-items: center; gap: var(--sp-2); }
 .gc-trip-participante-row input:not(.gc-trip-participante-cor) { flex: 1; min-width: 0; padding: 9px 12px; border-radius: var(--radius-pill); border: 1px solid var(--gc-line); font-family: 'Space Grotesk', sans-serif; font-size: 14px; font-weight: 600; color: var(--gc-ink); background: rgba(255,255,255,.06); }
