@@ -1564,7 +1564,7 @@ function GcManageCategoriesModal({ categories, onSave, onDelete, onClose }) {
    pro mês selecionado + histórico + os 2 indicadores que dependem dele no
    Dashboard (Saldo em Caixa / Poder de Compra).
 ----------------------------------------------------------------*/
-function GcInvestimentos({ snapshots }) {
+function GcInvestimentos({ snapshots, onEdit }) {
   const saldoEmCaixa = gcSaldoEmCaixa(snapshots);
   const asc = snapshots.slice().sort((a, b) => a.competencia.localeCompare(b.competencia));
   const historico = asc.slice().reverse();
@@ -1606,7 +1606,7 @@ function GcInvestimentos({ snapshots }) {
             const anterior = historico[i + 1] || null;
             const variacao = gcVariacaoSnapshot(s, anterior);
             return (
-              <div className="gc-list-row" key={s.id}>
+              <button type="button" className="gc-list-row gc-list-row-btn" key={s.id} onClick={() => onEdit(s.competencia)}>
                 <span className="gc-list-row-title" style={{ flex: 1 }}>{competenciaLabel(s.competencia)}</span>
                 <span className="gc-invest-row-vals">
                   <span className="gc-row-valor-display gc-money">{gcFmtMoney(s.saldo)}</span>
@@ -1616,7 +1616,7 @@ function GcInvestimentos({ snapshots }) {
                     </small>
                   )}
                 </span>
-              </div>
+              </button>
             );
           })}
         </div>
@@ -2509,7 +2509,7 @@ function App({ session }) {
           ) : subTab === "recorrencias" ? (
             <GcRecorrencias templates={expenseTemplates} categories={expenseCategories} onEdit={(t) => setTemplateForm({ initial: t })} />
           ) : subTab === "investimentos" ? (
-            <GcInvestimentos snapshots={investmentSnapshots} />
+            <GcInvestimentos snapshots={investmentSnapshots} onEdit={(comp) => setSnapshotForm({ initialCompetencia: comp })} />
           ) : subTab === "sonhos" ? (
             <GcSonhos
               items={wishlistItems}
