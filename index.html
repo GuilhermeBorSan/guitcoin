@@ -1700,7 +1700,9 @@ function GcInvestimentos({ snapshots, onEdit }) {
   const historico = asc.slice().reverse();
   const ultimoPar = asc.length >= 2 ? gcVariacaoSnapshot(asc[asc.length - 1], asc[asc.length - 2]) : null;
   const chartItems = asc.map(s => ({
-    label: competenciaLabel(s.competencia).split(" ")[0],
+    // Eixo X do gráfico de Evolução: número do mês (1–12), não o nome
+    // abreviado (Jan/Fev/...) usado no resto do app — pedido do Gui.
+    label: String(Number(s.competencia.slice(5, 7))),
     value: s.saldo || 0,
     id: s.competencia,
   }));
