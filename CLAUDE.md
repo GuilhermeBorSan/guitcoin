@@ -48,7 +48,9 @@ completo de estruturação em `C:\Users\gui30\.claude\plans\c-users-gui30-downlo
   recortes parciais.
 
 ## Modelo de dados
-Sete tabelas normalizadas (nenhuma ainda criada no Supabase — ver Roadmap):
+Sete tabelas normalizadas (`income_sources`/`income_entries`/
+`income_projections` já implementadas na Fase 1; as outras quatro entram nas
+próximas fases — ver Roadmap):
 - `income_sources` — fontes de renda: `nome`, `tipo` (`work`|`extra`),
   `ativo`, `ordem`.
 - `income_entries` — um lançamento por fonte por mês: `source_id`,
@@ -124,8 +126,12 @@ reajuste de preço, ex. Disney+ subindo mês a mês).
 - **Provisionar o projeto Supabase do Guitcoin** (separado do Guitchelin) +
   criar a conta única do Gui no painel + preencher `GC_SUPABASE_URL`/
   `GC_SUPABASE_ANON_KEY` no `index.html` (hoje são placeholders). Desligar
-  "Allow new users to sign up" depois de validar login em produção.
-- Fase 1 — Receitas (tabelas + tela).
+  "Allow new users to sign up" depois de validar login em produção. Decidido
+  fazer isso só no fim, depois de todas as fases prontas (até lá, só modo
+  demo local).
+- ~~Fase 1 — Receitas (tabelas + tela)~~ ✅ feito: `GcReceitas` (cards de
+  projeção + seletor de mês + grid por fonte), `GcIncomeSourceForm`,
+  `GcIncomeProjectionForm`.
 - Fase 2 — Despesas + Recorrências (núcleo de uso diário do app).
 - Fase 3 — Investimentos.
 - Fase 4 — Lista de Sonhos.
@@ -142,23 +148,35 @@ Sem etapa de build, o write manda todas as colunas — coluna nova no objeto
 exige coluna nova na tabela ANTES de publicar, senão o upsert falha. O
 `schema.sql` guarda cada `alter table ... add column if not exists ...`
 comentado; rodar a linha uma vez no SQL Editor. Última coluna adicionada:
-nenhuma ainda (schema inicial, Fase 0 sem tabelas).
+nenhuma ainda desde o schema inicial da Fase 1 (`income_sources`/
+`income_entries`/`income_projections` já nasceram com todas as colunas).
 
 ## Como verificar mudanças
-Fase 0 (atual): abra o `index.html` no navegador — deve entrar direto em modo
-demo local (`GC_IS_LOCAL`), sem tela de login, e navegar entre Dashboard/
-Receitas/Despesas/Recorrências/Investimentos/Sonhos pela nav inferior e pela
-gaveta lateral, todas mostrando um `EmptyState` de "em construção" por
-enquanto. Confirme que o FAB central abre um aviso contextual (texto muda
-conforme a aba atual) e que a gaveta lateral abre/fecha pelo ícone do topbar.
-Fora do localhost (produção), sem sessão o app deve mostrar só a tela de
-login (ainda sem credenciais reais até o Supabase ser provisionado).
+Abra o `index.html` no navegador — entra direto em modo demo local
+(`GC_IS_LOCAL`), sem tela de login. Fora do localhost (produção), sem sessão
+o app mostra só a tela de login (ainda sem credenciais reais até o Supabase
+ser provisionado).
 
-A partir da Fase 1, cada fase acrescenta seu próprio roteiro de verificação
-(ver a seção "Verification Plan" do plano de estruturação) — login real,
-lançar receita/despesa, conferir geração automática de recorrência, marcar
-despesa dividida e confirmar que não entra no Custo de Vida, recarregar e
-confirmar persistência via Supabase.
+- **Shell (Fase 0)**: navegue entre Dashboard/Despesas pela nav inferior e
+  pela gaveta lateral (Recorrências/Investimentos/Lista de Sonhos ainda
+  mostram `EmptyState` de "em construção"). O FAB central abre um aviso
+  contextual nessas telas ainda não implementadas.
+- **Receitas (Fase 1)**: abra Receitas pela gaveta — deve mostrar os cards
+  "Renda Fixa Anual (Garantida)"/"Extra Acumulado (YTD)"/"Projeção Total"
+  batendo com os números da planilha original (R$57.600 / R$235 / R$57.835
+  em modo demo), o seletor de mês começando no último mês com lançamento
+  (Jul/2026 no demo) e a lista de fontes (WriteChoice "Fixa", Cambridge
+  "Extra") com o valor daquele mês editável inline. Edite um valor (deve
+  atualizar o "Total do mês" ao sair do campo), navegue pra outro mês e
+  volte (o valor deve persistir), toque no card de projeção pra editar
+  `renda_fixa_mensal_esperada`, e toque no FAB pra cadastrar uma fonte nova
+  (Fixa ou Extra) — deve aparecer na lista imediatamente.
+
+A partir da Fase 2, cada fase acrescenta seu próprio roteiro de verificação
+(ver a seção "Verification Plan" do plano de estruturação) — geração
+automática de recorrência, marcar despesa dividida e confirmar que não entra
+no Custo de Vida, recarregar e confirmar persistência via Supabase (depois
+que o projeto for provisionado).
 
 ## Convenções de trabalho
 - Responder e escrever UI sempre em pt-BR.

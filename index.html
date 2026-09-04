@@ -109,6 +109,37 @@ function competenciaLabel(comp) {
   const [y, m] = (comp || "").split("-").map(Number);
   return m ? `${MONTH_LABELS[m - 1]} ${y}` : comp;
 }
+function gcShiftCompetencia(comp, delta) {
+  const [y, m] = comp.split("-").map(Number);
+  const d = new Date(y, m - 1 + delta, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+function gcFmtMoney(v) {
+  return (v || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+}
+
+// ---- Fórmulas de Receita (funções puras, sem React/Supabase) ----
+function gcFindIncomeEntry(entries, sourceId, competencia) {
+  return entries.find(e => e.sourceId === sourceId && e.competencia === competencia) || null;
+}
+function gcFindIncomeProjection(projections, ano) {
+  return projections.find(p => p.ano === ano) || null;
+}
+function gcMonthEntriesTotal(entries, competencia) {
+  return entries.filter(e => e.competencia === competencia).reduce((s, e) => s + (e.valor || 0), 0);
+}
+function gcExtraAcumuladoYTD(entries, sources, ano, ateCompetencia) {
+  const extraIds = new Set(sources.filter(s => s.tipo === "extra").map(s => s.id));
+  return entries
+    .filter(e => extraIds.has(e.sourceId) && e.competencia.startsWith(ano + "-") && e.competencia <= ateCompetencia)
+    .reduce((s, e) => s + (e.valor || 0), 0);
+}
+function gcRendaFixaAnualGarantida(projection) {
+  return projection ? (projection.rendaFixaMensalEsperada || 0) * 12 : 0;
+}
+function gcProjecaoTotalAno(rendaFixaAnual, extraAcumuladoYTD) {
+  return rendaFixaAnual + extraAcumuladoYTD;
+}
 // Preview local: localhost entra direto no app com dados fictícios, sem
 // gravar no Supabase de produção. Em guitcoin.vercel.app isso fica off.
 const GC_IS_LOCAL = ["localhost", "127.0.0.1"].includes(location.hostname);
@@ -171,14 +202,121 @@ function useGcSession() {
   return session;
 }
 
-// ---- Dados (Supabase). Fase 0: ainda sem tabelas — elas entram junto com a
-// tela que as usa, nas próximas fases (ver CLAUDE.md > Modelo de dados /
-// Roadmap). Por ora só expõe loading/error, já no formato final do hook, pra
-// as próximas fases só acrescentarem arrays + verbos aqui dentro. ----
+// ---- Mapeamento de linhas (Supabase snake_case <-> JS camelCase). Cada
+// tabela ganha seu par gcRowToX/gcXToRow, todo campo traduzido à mão (mesmo
+// padrão do Guitchelin). ----
+const gcRowToIncomeSource = (row) => ({ id: row.id, nome: row.nome, tipo: row.tipo || "work", ativo: row.ativo !== false, ordem: row.ordem || 0 });
+const gcIncomeSourceToRow = (s) => ({ id: s.id, nome: s.nome, tipo: s.tipo || "work", ativo: s.ativo !== false, ordem: s.ordem || 0 });
+const gcRowToIncomeEntry = (row) => ({ id: row.id, sourceId: row.source_id, competencia: row.competencia, valor: Number(row.valor) || 0 });
+const gcIncomeEntryToRow = (e) => ({ id: e.id, source_id: e.sourceId, competencia: e.competencia, valor: e.valor || 0 });
+const gcRowToIncomeProjection = (row) => ({ id: row.id, ano: String(row.ano), rendaFixaMensalEsperada: Number(row.renda_fixa_mensal_esperada) || 0 });
+const gcIncomeProjectionToRow = (p) => ({ id: p.id, ano: Number(p.ano), renda_fixa_mensal_esperada: p.rendaFixaMensalEsperada || 0 });
+
+// ---- Demo local (GC_IS_LOCAL): dados fictícios pra abrir o app sem
+// Supabase, com os números reais da planilha original (WriteChoice/
+// Cambridge, Jan–Jul/2026). ----
+const GC_DEMO_DATA = {
+  incomeSources: [
+    { id: "demo-src-writechoice", nome: "WriteChoice", tipo: "work", ativo: true, ordem: 0 },
+    { id: "demo-src-cambridge", nome: "Cambridge", tipo: "extra", ativo: true, ordem: 1 },
+  ],
+  incomeEntries: [
+    { id: "demo-inc-1", sourceId: "demo-src-writechoice", competencia: "2026-01", valor: 4800 },
+    { id: "demo-inc-2", sourceId: "demo-src-writechoice", competencia: "2026-02", valor: 4800 },
+    { id: "demo-inc-3", sourceId: "demo-src-writechoice", competencia: "2026-03", valor: 4800 },
+    { id: "demo-inc-4", sourceId: "demo-src-writechoice", competencia: "2026-04", valor: 5300 },
+    { id: "demo-inc-5", sourceId: "demo-src-writechoice", competencia: "2026-05", valor: 6000 },
+    { id: "demo-inc-6", sourceId: "demo-src-writechoice", competencia: "2026-06", valor: 6000 },
+    { id: "demo-inc-7", sourceId: "demo-src-writechoice", competencia: "2026-07", valor: 6400 },
+    { id: "demo-inc-8", sourceId: "demo-src-cambridge", competencia: "2026-02", valor: 235 },
+  ],
+  incomeProjections: [
+    { id: "demo-proj-2026", ano: "2026", rendaFixaMensalEsperada: 4800 },
+  ],
+};
+
+// ---- Dados (Supabase: tabelas de Receita nesta fase; Despesas/
+// Recorrências/Investimentos/Sonhos entram nas próximas). Isolado aqui: as
+// telas só conhecem saveIncomeSource/deleteIncomeSource/saveIncomeEntry/
+// deleteIncomeEntry/saveIncomeProjection e os arrays incomeSources/
+// incomeEntries/incomeProjections. ----
 function useGcData(session) {
-  const [loading, setLoading] = useState(false);
+  const [incomeSources, setIncomeSources] = useState(GC_IS_LOCAL ? GC_DEMO_DATA.incomeSources : []);
+  const [incomeEntries, setIncomeEntries] = useState(GC_IS_LOCAL ? GC_DEMO_DATA.incomeEntries : []);
+  const [incomeProjections, setIncomeProjections] = useState(GC_IS_LOCAL ? GC_DEMO_DATA.incomeProjections : []);
+  const [loading, setLoading] = useState(!GC_IS_LOCAL);
   const [error, setError] = useState(null);
-  return { loading, error, dismissError: () => setError(null) };
+
+  const loadData = async () => {
+    if (GC_IS_LOCAL || !gcSupabase) { setLoading(false); return; }
+    setLoading(true);
+    try {
+      const [srcRes, entRes, projRes] = await Promise.all([
+        gcSupabase.from("income_sources").select("*").order("ordem", { ascending: true }),
+        gcSupabase.from("income_entries").select("*").order("competencia", { ascending: true }),
+        gcSupabase.from("income_projections").select("*").order("ano", { ascending: true }),
+      ]);
+      if (srcRes.error) throw srcRes.error;
+      if (entRes.error) throw entRes.error;
+      if (projRes.error) throw projRes.error;
+      setIncomeSources((srcRes.data || []).map(gcRowToIncomeSource));
+      setIncomeEntries((entRes.data || []).map(gcRowToIncomeEntry));
+      setIncomeProjections((projRes.data || []).map(gcRowToIncomeProjection));
+    } catch (err) {
+      console.error(err);
+      setError(gcWriteErrorMsg(err, "carregar os dados"));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { loadData(); }, [session]);
+
+  const saveIncomeSource = async (source) => {
+    setIncomeSources(prev => prev.some(s => s.id === source.id) ? prev.map(s => s.id === source.id ? source : s) : [...prev, source]);
+    if (GC_IS_LOCAL) return true;
+    const { error: err } = await gcSupabase.from("income_sources").upsert(gcIncomeSourceToRow(source));
+    if (err) { console.error(err); setError(gcWriteErrorMsg(err, "salvar a fonte de receita")); await loadData(); return false; }
+    return true;
+  };
+
+  const deleteIncomeSource = async (id) => {
+    setIncomeSources(prev => prev.filter(s => s.id !== id));
+    setIncomeEntries(prev => prev.filter(e => e.sourceId !== id));
+    if (GC_IS_LOCAL) return true;
+    const { error: err } = await gcSupabase.from("income_sources").delete().eq("id", id);
+    if (err) { console.error(err); setError(gcWriteErrorMsg(err, "excluir a fonte de receita")); await loadData(); return false; }
+    return true;
+  };
+
+  const saveIncomeEntry = async (entry) => {
+    setIncomeEntries(prev => prev.some(e => e.id === entry.id) ? prev.map(e => e.id === entry.id ? entry : e) : [...prev, entry]);
+    if (GC_IS_LOCAL) return true;
+    const { error: err } = await gcSupabase.from("income_entries").upsert(gcIncomeEntryToRow(entry));
+    if (err) { console.error(err); setError(gcWriteErrorMsg(err, "salvar a receita do mês")); await loadData(); return false; }
+    return true;
+  };
+
+  const deleteIncomeEntry = async (id) => {
+    setIncomeEntries(prev => prev.filter(e => e.id !== id));
+    if (GC_IS_LOCAL) return true;
+    const { error: err } = await gcSupabase.from("income_entries").delete().eq("id", id);
+    if (err) { console.error(err); setError(gcWriteErrorMsg(err, "excluir a receita do mês")); await loadData(); return false; }
+    return true;
+  };
+
+  const saveIncomeProjection = async (projection) => {
+    setIncomeProjections(prev => prev.some(p => p.id === projection.id) ? prev.map(p => p.id === projection.id ? projection : p) : [...prev, projection]);
+    if (GC_IS_LOCAL) return true;
+    const { error: err } = await gcSupabase.from("income_projections").upsert(gcIncomeProjectionToRow(projection));
+    if (err) { console.error(err); setError(gcWriteErrorMsg(err, "salvar a projeção")); await loadData(); return false; }
+    return true;
+  };
+
+  return {
+    incomeSources, incomeEntries, incomeProjections, loading, error, dismissError: () => setError(null),
+    saveIncomeSource, deleteIncomeSource, saveIncomeEntry, deleteIncomeEntry, saveIncomeProjection,
+  };
 }
 
 /* ---------------------------------------------------------------
@@ -279,6 +417,161 @@ function EmptyState({ icon, title, message, action }) {
 }
 
 /* ---------------------------------------------------------------
+   TELA: RECEITAS (Fase 1) — cards de projeção do ano + grid mensal por
+   fonte de receita, com seletor de mês (mesmo padrão de mês que Despesas
+   vai usar na Fase 2).
+----------------------------------------------------------------*/
+function GcReceitas({ sources, entries, projections, competencia, onCompetenciaChange, onEditSource, onEditProjection, onSaveEntryValor }) {
+  const ano = competencia.slice(0, 4);
+  const projection = gcFindIncomeProjection(projections, ano);
+  const rendaFixaAnual = gcRendaFixaAnualGarantida(projection);
+  const extraYTD = gcExtraAcumuladoYTD(entries, sources, ano, competencia);
+  const projecaoTotal = gcProjecaoTotalAno(rendaFixaAnual, extraYTD);
+  const ativos = sources.filter(s => s.ativo !== false).slice().sort((a, b) => (a.ordem || 0) - (b.ordem || 0));
+  const ativoIds = new Set(ativos.map(s => s.id));
+  const monthTotal = gcMonthEntriesTotal(entries.filter(e => ativoIds.has(e.sourceId)), competencia);
+
+  return (
+    <div className="gc-screen">
+      <div className="gc-statcards">
+        <button type="button" className="gc-statcard" onClick={onEditProjection}>
+          <span className="gc-statcard-num gc-money">{gcFmtMoney(rendaFixaAnual)}</span>
+          <span className="gc-statcard-cap">Renda Fixa Anual (Garantida)</span>
+        </button>
+        <div className="gc-statcard">
+          <span className="gc-statcard-num gc-money">{gcFmtMoney(extraYTD)}</span>
+          <span className="gc-statcard-cap">Extra Acumulado (YTD)</span>
+        </div>
+        <div className="gc-statcard">
+          <span className="gc-statcard-num gc-money">{gcFmtMoney(projecaoTotal)}</span>
+          <span className="gc-statcard-cap">Projeção Total {ano}</span>
+        </div>
+      </div>
+
+      <div className="gc-month-switch">
+        <button type="button" className="lb-icon-btn" onClick={() => onCompetenciaChange(gcShiftCompetencia(competencia, -1))} aria-label="Mês anterior"><ChevronLeft size={20} /></button>
+        <span className="gc-month-label">{competenciaLabel(competencia)}</span>
+        <button type="button" className="lb-icon-btn" onClick={() => onCompetenciaChange(gcShiftCompetencia(competencia, 1))} aria-label="Próximo mês"><ChevronRight size={20} /></button>
+      </div>
+
+      {ativos.length === 0 ? (
+        <EmptyState icon={<TrendingUp size={40} />} title="Nenhuma fonte de receita" message="Toque no + pra cadastrar seu salário ou uma renda extra." />
+      ) : (
+        <div className="gc-list">
+          {ativos.map(source => {
+            const entry = gcFindIncomeEntry(entries, source.id, competencia);
+            return (
+              <div className="gc-list-row" key={source.id}>
+                <button type="button" className="gc-list-row-main" onClick={() => onEditSource(source)}>
+                  <span className={"gc-pill" + (source.tipo === "extra" ? " gc-pill-gold" : "")}>{source.tipo === "extra" ? "Extra" : "Fixa"}</span>
+                  <span className="gc-list-row-title">{source.nome}</span>
+                </button>
+                <input
+                  type="number" inputMode="decimal" step="0.01" placeholder="0,00"
+                  className="gc-row-valor gc-money"
+                  defaultValue={entry ? entry.valor : ""}
+                  key={competencia + source.id + (entry ? entry.id : "novo")}
+                  onBlur={(e) => {
+                    const valor = parseFloat(e.target.value.replace(",", ".")) || 0;
+                    if (!entry && valor === 0) return;
+                    onSaveEntryValor(source.id, competencia, entry ? entry.id : null, valor);
+                  }}
+                />
+              </div>
+            );
+          })}
+          <div className="gc-list-total">
+            <span>Total do mês</span>
+            <span className="gc-money">{gcFmtMoney(monthTotal)}</span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function GcIncomeSourceForm({ initial, onSave, onDelete, onClose }) {
+  const [nome, setNome] = useState(initial ? initial.nome : "");
+  const [tipo, setTipo] = useState(initial ? initial.tipo : "work");
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!nome.trim()) return;
+    setBusy(true);
+    const ok = await onSave({ id: initial ? initial.id : uid(), nome: nome.trim(), tipo, ativo: true, ordem: initial ? initial.ordem : 0 });
+    setBusy(false);
+    if (ok !== false) onClose();
+  };
+
+  return (
+    <Modal title={initial ? "Editar fonte de receita" : "Nova fonte de receita"} onClose={onClose}>
+      <form onSubmit={submit} className="lb-form-grid">
+        <Field label="Nome" wide>
+          <input value={nome} onChange={e => setNome(e.target.value)} placeholder="Ex.: WriteChoice" autoFocus required />
+        </Field>
+        <Field label="Tipo" wide>
+          <Segmented options={[{ value: "work", label: "Fixa (salário)" }, { value: "extra", label: "Extra" }]} value={tipo} onChange={setTipo} />
+        </Field>
+        <div className="lb-form-footer">
+          <div className="lb-form-actions">
+            <div className="lb-form-actions-left">
+              {initial && (
+                <button type="button" className="lb-btn danger" onClick={async () => {
+                  if (!confirm("Excluir esta fonte de receita e todos os lançamentos dela?")) return;
+                  const ok = await onDelete(initial.id);
+                  if (ok !== false) onClose();
+                }}>
+                  <Trash2 size={16} /> Excluir
+                </button>
+              )}
+            </div>
+            <div className="lb-form-actions-right">
+              <button type="button" className="lb-btn ghost" onClick={onClose}>Cancelar</button>
+              <button type="submit" className="lb-btn primary" disabled={busy}>{busy ? "Salvando..." : "Salvar"}</button>
+            </div>
+          </div>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function GcIncomeProjectionForm({ ano, initial, onSave, onClose }) {
+  const [valor, setValor] = useState(initial ? String(initial.rendaFixaMensalEsperada) : "");
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setBusy(true);
+    const ok = await onSave({
+      id: initial ? initial.id : uid(), ano,
+      rendaFixaMensalEsperada: parseFloat(String(valor).replace(",", ".")) || 0,
+    });
+    setBusy(false);
+    if (ok !== false) onClose();
+  };
+
+  return (
+    <Modal title={`Projeção ${ano}`} onClose={onClose}>
+      <form onSubmit={submit} className="lb-form-grid">
+        <Field label="Renda fixa mensal esperada" wide>
+          <input type="number" inputMode="decimal" step="0.01" value={valor} onChange={e => setValor(e.target.value)} autoFocus required />
+        </Field>
+        <div className="lb-form-footer">
+          <div className="lb-form-actions">
+            <div className="lb-form-actions-right">
+              <button type="button" className="lb-btn ghost" onClick={onClose}>Cancelar</button>
+              <button type="submit" className="lb-btn primary" disabled={busy}>{busy ? "Salvando..." : "Salvar"}</button>
+            </div>
+          </div>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+/* ---------------------------------------------------------------
    SHELL DO APP (topbar, gaveta lateral, nav inferior + FAB contextual).
    Fase 0: telas ainda são placeholders (EmptyState) — cada uma vira de
    verdade na fase correspondente (ver CLAUDE.md > Roadmap).
@@ -297,18 +590,33 @@ const GC_NAV_ITEMS = [
 function gcFabHint(subTab) {
   switch (subTab) {
     case "despesas": return "Lançar uma despesa avulsa (Compras) ou criar uma recorrência chega na Fase 2.";
-    case "receitas": return "Lançar uma receita do mês chega na Fase 1.";
     case "investimentos": return "Registrar o saldo do mês chega na Fase 3.";
     case "sonhos": return "Adicionar um item à Lista de Sonhos chega na Fase 4.";
     default: return "As ações rápidas chegam junto com cada tela, fase a fase.";
   }
 }
+// Competência inicial de Receitas: no modo demo, começa no último mês com
+// lançamento (mostra dado de cara); em produção, começa no mês atual.
+function gcInitialReceitasCompetencia() {
+  if (GC_IS_LOCAL && GC_DEMO_DATA.incomeEntries.length) {
+    return GC_DEMO_DATA.incomeEntries.map(e => e.competencia).slice().sort().slice(-1)[0];
+  }
+  return competenciaAtual();
+}
 
 function App({ session }) {
-  const { loading, error, dismissError } = useGcData(session);
+  const {
+    incomeSources, incomeEntries, incomeProjections, loading, error, dismissError,
+    saveIncomeSource, deleteIncomeSource, saveIncomeEntry, saveIncomeProjection,
+  } = useGcData(session);
+  // (deleteIncomeEntry existe no hook, ainda sem UI que remova um lançamento
+  // pontual — fica pra quando a tela de Receitas ganhar essa ação.)
   const [subTab, setSubTab] = useState("dashboard");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [fabInfo, setFabInfo] = useState(false);
+  const [receitasComp, setReceitasComp] = useState(gcInitialReceitasCompetencia);
+  const [sourceForm, setSourceForm] = useState(null);
+  const [projectionForm, setProjectionForm] = useState(null);
 
   useEffect(() => {
     if (!sidebarOpen) return;
@@ -369,6 +677,14 @@ function App({ session }) {
         <main className="gc-main">
           {loading ? (
             <p className="lb-hint gc-empty">Carregando...</p>
+          ) : subTab === "receitas" ? (
+            <GcReceitas
+              sources={incomeSources} entries={incomeEntries} projections={incomeProjections}
+              competencia={receitasComp} onCompetenciaChange={setReceitasComp}
+              onEditSource={(s) => setSourceForm({ initial: s })}
+              onEditProjection={() => setProjectionForm({ initial: gcFindIncomeProjection(incomeProjections, receitasComp.slice(0, 4)), ano: receitasComp.slice(0, 4) })}
+              onSaveEntryValor={(sourceId, competencia, existingId, valor) => saveIncomeEntry({ id: existingId || uid(), sourceId, competencia, valor })}
+            />
           ) : (
             <EmptyState
               icon={current ? current.icon(40) : <BarChart3 size={40} />}
@@ -386,7 +702,9 @@ function App({ session }) {
           <button type="button" className={"gc-navbtn" + (subTab === "dashboard" ? " active" : "")} onClick={() => setSubTab("dashboard")}>
             <BarChart3 size={20} /><span>Dashboard</span>
           </button>
-          <button type="button" className="gc-navfab" onClick={() => setFabInfo(true)} aria-label="Adicionar">
+          <button type="button" className="gc-navfab"
+            onClick={() => { if (subTab === "receitas") setSourceForm({ initial: null }); else setFabInfo(true); }}
+            aria-label={subTab === "receitas" ? "Nova fonte de receita" : "Adicionar"}>
             <Plus size={26} />
           </button>
           <button type="button" className={"gc-navbtn" + (subTab === "despesas" ? " active" : "")} onClick={() => setSubTab("despesas")}>
@@ -398,6 +716,12 @@ function App({ session }) {
           <Modal title="Em construção" onClose={() => setFabInfo(false)}>
             <p className="lb-hint">{gcFabHint(subTab)}</p>
           </Modal>
+        )}
+        {sourceForm && (
+          <GcIncomeSourceForm initial={sourceForm.initial} onSave={saveIncomeSource} onDelete={deleteIncomeSource} onClose={() => setSourceForm(null)} />
+        )}
+        {projectionForm && (
+          <GcIncomeProjectionForm ano={projectionForm.ano} initial={projectionForm.initial} onSave={saveIncomeProjection} onClose={() => setProjectionForm(null)} />
         )}
       </div>
     </>
@@ -593,6 +917,37 @@ html.gc-iphone-preview .gc-sidebar { max-height: calc(100% - var(--gc-topbar-h) 
 .lb-empty p { margin: 0; font-size: 16px; max-width: 320px; font-style: italic; }
 .lb-hint { color: var(--gc-ink-soft); text-align: center; }
 .gc-empty { padding: 60px 20px; }
+
+/* ---- Telas: statcards, listas, pílulas, seletor de mês ---- */
+.gc-screen { display: flex; flex-direction: column; gap: var(--sp-5); }
+
+.gc-statcards { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--sp-3); }
+.gc-statcard {
+  display: flex; flex-direction: column; align-items: center; gap: 4px; text-align: center;
+  background: #fff; border: 1px solid var(--gc-line); border-radius: var(--radius-md);
+  padding: var(--sp-3) var(--sp-2); font: inherit; color: inherit;
+}
+button.gc-statcard { cursor: pointer; }
+button.gc-statcard:hover { border-color: var(--gc-accent); }
+div.gc-statcard { cursor: default; }
+.gc-statcard-num { font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 15.5px; color: var(--gc-accent); }
+.gc-statcard-cap { font-family: 'Space Grotesk', sans-serif; font-size: 10px; text-transform: uppercase; letter-spacing: .4px; color: var(--gc-ink-soft); line-height: 1.3; }
+
+.gc-month-switch { display: flex; align-items: center; justify-content: center; gap: var(--sp-3); }
+.gc-month-label { font-family: 'Playfair Display', serif; font-weight: 700; font-size: 17px; min-width: 130px; text-align: center; }
+
+.gc-pill { display: inline-flex; align-items: center; padding: 3px 10px; border-radius: var(--radius-pill); border: 1px solid var(--gc-accent); color: var(--gc-accent); font-family: 'Space Grotesk', sans-serif; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .3px; flex-shrink: 0; }
+.gc-pill-gold { border-color: var(--gc-gold); color: var(--gc-gold); }
+.gc-pill-red { border-color: var(--gc-red); color: var(--gc-red); }
+
+.gc-list { display: flex; flex-direction: column; border: 1px solid var(--gc-line); border-radius: var(--radius-md); overflow: hidden; background: #fff; }
+.gc-list-row { display: flex; align-items: center; gap: var(--sp-3); padding: var(--sp-3) var(--sp-4); border-bottom: 1px solid var(--gc-line); }
+.gc-list-row:last-of-type { border-bottom: none; }
+.gc-list-row-main { display: flex; align-items: center; gap: var(--sp-3); flex: 1; min-width: 0; background: none; border: none; padding: 0; cursor: pointer; text-align: left; font: inherit; color: inherit; }
+.gc-list-row-title { font-family: 'Space Grotesk', sans-serif; font-weight: 600; font-size: 14.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gc-row-valor { width: 110px; flex-shrink: 0; text-align: right; padding: 8px 10px; border-radius: var(--radius-pill); border: 1px solid var(--gc-line); font-size: 15px; font-weight: 600; color: var(--gc-ink); }
+.gc-row-valor:focus { outline: 1.5px solid var(--gc-accent); outline-offset: 1px; }
+.gc-list-total { display: flex; align-items: center; justify-content: space-between; padding: var(--sp-3) var(--sp-4); background: var(--gc-surface-2); font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 14.5px; }
 
 /* ---- Shell (topbar, sidebar, bottomnav, login) ---- */
 .gc-app { min-height: 100vh; padding-top: var(--gc-topbar-h); padding-bottom: calc(78px + env(safe-area-inset-bottom, var(--gc-sab))); }
