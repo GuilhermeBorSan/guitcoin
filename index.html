@@ -83,6 +83,7 @@ const FileText = (p) => <IconBase {...p}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0
 const Repeat = (p) => <IconBase {...p}><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></IconBase>;
 const Gift = (p) => <IconBase {...p}><polyline points="20 12 20 22 4 22 4 12"/><rect x="2" y="7" width="20" height="5"/><line x1="12" y1="22" x2="12" y2="7"/><path d="M12 7H7.5a2.5 2.5 0 0 1 0-5C11 2 12 7 12 7z"/><path d="M12 7h4.5a2.5 2.5 0 0 0 0-5C13 2 12 7 12 7z"/></IconBase>;
 const Menu = (p) => <IconBase {...p}><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></IconBase>;
+const Upload = (p) => <IconBase {...p}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></IconBase>;
 
 // Marca (círculo + cifrão), mesmo papel do GgFlower no Guitchelin: usada no
 // topbar e como ícone do botão que abre/fecha a gaveta lateral (outline
@@ -1596,6 +1597,34 @@ function App({ session }) {
   const [wishlistForm, setWishlistForm] = useState(null);
   const [despesasFabMenu, setDespesasFabMenu] = useState(false);
   const [dashboardFabMenu, setDashboardFabMenu] = useState(false);
+  const [importing, setImporting] = useState(false);
+
+  // ---- Importação inicial (temporária): escreve os mesmos dados usados no
+  // modo demo (GC_DEMO_DATA, já validados contra a planilha real do Gui)
+  // direto no Firestore de produção, via os mesmos verbos save* que a UI usa
+  // — não recalcula nem inventa nada. As instâncias recorrentes (mensais)
+  // não entram aqui: nascem sozinhas via gcGenerateMissingInstances assim
+  // que os templates existirem e a página recarregar. Remover este botão e
+  // a função depois que a importação for confirmada. ----
+  const importarDadosIniciais = async () => {
+    if (!window.confirm("Isso vai gravar os dados de exemplo (baseados na sua planilha) na sua conta real do Firebase. Só faça isso uma vez. Continuar?")) return;
+    setImporting(true);
+    try {
+      for (const s of GC_DEMO_DATA.incomeSources) await saveIncomeSource(s);
+      for (const e of GC_DEMO_DATA.incomeEntries) await saveIncomeEntry(e);
+      for (const p of GC_DEMO_DATA.incomeProjections) await saveIncomeProjection(p);
+      for (const t of GC_DEMO_DATA.expenseTemplates) await saveExpenseTemplate(t);
+      for (const i of GC_DEMO_DATA.expenseInstancesAvulsas) await saveExpenseInstance(i);
+      for (const sn of GC_DEMO_DATA.investmentSnapshots) await saveInvestmentSnapshot(sn);
+      for (const w of GC_DEMO_DATA.wishlistItems) await saveWishlistItem(w);
+      window.alert("Importação concluída! Recarregue a página pra ver os dados (e as recorrências mensais serão geradas automaticamente).");
+    } catch (err) {
+      console.error(err);
+      window.alert("Algo deu errado na importação — veja o console.");
+    } finally {
+      setImporting(false);
+    }
+  };
 
   useEffect(() => {
     if (!sidebarOpen) return;
@@ -1628,6 +1657,11 @@ function App({ session }) {
           ))}
         </nav>
         <span className="gc-sidebar-spacer" />
+        {!GC_IS_LOCAL && (
+          <button type="button" className="gc-sidebar-link" disabled={importing} onClick={importarDadosIniciais} aria-label="Importar dados iniciais">
+            <Upload size={18} /> <span>{importing ? "Importando..." : "Importar dados iniciais"}</span>
+          </button>
+        )}
         <button type="button" className="gc-sidebar-link gc-sidebar-signout" onClick={() => { if (!GC_IS_LOCAL && gcAuth) gcAuth.signOut(); }} aria-label="Sair">
           <LogOut size={18} /> <span>Sair</span>
         </button>
