@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<meta name="theme-color" content="#ffffff" />
+<meta name="theme-color" content="#0A0A0A" />
 <link rel="icon" type="image/png" href="assets/icon.png" />
 <link rel="apple-touch-icon" href="assets/icon-180.png" />
 <link rel="manifest" href="manifest.webmanifest" />
@@ -2251,14 +2251,12 @@ function GcContaItemForm({ initial, onSave, onDelete, onClose }) {
 }
 
 /* ---------------------------------------------------------------
-   SHELL DO APP (topbar, gaveta lateral, nav inferior + FAB contextual).
-   Fase 0: telas ainda são placeholders (EmptyState) — cada uma vira de
-   verdade na fase correspondente (ver CLAUDE.md > Roadmap).
+   SHELL DO APP (topbar + hub sheet + FAB contextual).
 ----------------------------------------------------------------*/
 const GC_NAV_ITEMS = [
   { value: "dashboard", label: "Dashboard", icon: (s) => <BarChart3 size={s} />, group: null },
-  { value: "receitas", label: "Receitas", icon: (s) => <TrendingUp size={s} />, group: "Financeiro" },
   { value: "despesas", label: "Despesas", icon: (s) => <FileText size={s} />, group: null },
+  { value: "receitas", label: "Receitas", icon: (s) => <TrendingUp size={s} />, group: "Financeiro" },
   { value: "recorrencias", label: "Recorrências", icon: (s) => <Repeat size={s} />, group: "Financeiro" },
   { value: "investimentos", label: "Investimentos", icon: (s) => <TrendingUp size={s} />, group: "Financeiro" },
   { value: "sonhos", label: "Lista de Sonhos", icon: (s) => <Gift size={s} />, group: "Listas" },
@@ -2292,7 +2290,7 @@ function App({ session }) {
   // (deleteIncomeEntry existe no hook, ainda sem UI que remova um lançamento
   // pontual — fica pra quando a tela de Receitas ganhar essa ação.)
   const [subTab, setSubTab] = useState("dashboard");
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [hubOpen, setHubOpen] = useState(false);
   const [receitasAno, setReceitasAno] = useState(gcInitialReceitasAno);
   const [despesasComp, setDespesasComp] = useState(competenciaAtual);
   const [dashboardAno, setDashboardAno] = useState(() => competenciaAtual().slice(0, 4));
@@ -2365,11 +2363,11 @@ function App({ session }) {
   };
 
   useEffect(() => {
-    if (!sidebarOpen) return;
-    const onKey = (e) => { if (e.key === "Escape") setSidebarOpen(false); };
+    if (!hubOpen) return;
+    const onKey = (e) => { if (e.key === "Escape") setHubOpen(false); };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [sidebarOpen]);
+  }, [hubOpen]);
 
   useEffect(() => {
     setTopbarFilterOpen(false);
@@ -2382,58 +2380,56 @@ function App({ session }) {
     return () => document.removeEventListener("keydown", onKey);
   }, [topbarFilterOpen]);
 
-  const openTab = (tab) => { setSidebarOpen(false); setSubTab(tab); };
-  const financeiro = GC_NAV_ITEMS.filter(i => i.group === "Financeiro");
-  const listas = GC_NAV_ITEMS.filter(i => i.group === "Listas");
-  const ferramentas = GC_NAV_ITEMS.filter(i => i.group === "Ferramentas");
+  const openTab = (tab) => { setHubOpen(false); setSubTab(tab); };
   const current = GC_NAV_ITEMS.find(i => i.value === subTab);
 
   return (
     <>
-      {sidebarOpen && <div className="gc-sidebar-backdrop" onClick={() => setSidebarOpen(false)} />}
-      <aside className={"gc-sidebar" + (sidebarOpen ? " open" : "")}>
-        <nav className="gc-sidebar-nav">
-          <span className="gc-sidebar-label">Financeiro</span>
-          {financeiro.map(item => (
-            <button key={item.value} type="button" className={"gc-sidebar-link" + (subTab === item.value ? " active" : "")} onClick={() => openTab(item.value)}>
-              {item.icon(18)} <span>{item.label}</span>
-            </button>
-          ))}
-          <span className="gc-sidebar-label">Listas</span>
-          {listas.map(item => (
-            <button key={item.value} type="button" className={"gc-sidebar-link" + (subTab === item.value ? " active" : "")} onClick={() => openTab(item.value)}>
-              {item.icon(18)} <span>{item.label}</span>
-            </button>
-          ))}
-          <span className="gc-sidebar-label">Ferramentas</span>
-          {ferramentas.map(item => (
-            <button key={item.value} type="button" className={"gc-sidebar-link" + (subTab === item.value ? " active" : "")} onClick={() => openTab(item.value)}>
-              {item.icon(18)} <span>{item.label}</span>
-            </button>
-          ))}
-        </nav>
-        <span className="gc-sidebar-spacer" />
-        {!GC_IS_LOCAL && (
-          <button type="button" className="gc-sidebar-link" disabled={importing} onClick={importarDadosIniciais} aria-label="Importar dados iniciais">
-            <Upload size={18} /> <span>{importing ? "Importando..." : "Importar dados iniciais"}</span>
-          </button>
-        )}
-        <button type="button" className="gc-sidebar-link gc-sidebar-signout" onClick={() => { if (!GC_IS_LOCAL && gcAuth) gcAuth.signOut(); }} aria-label="Sair">
-          <LogOut size={18} /> <span>Sair</span>
-        </button>
-      </aside>
+      {hubOpen && (
+        <>
+          <div className="gc-hub-backdrop" onClick={() => setHubOpen(false)} />
+          <div className="gc-hub-sheet" role="dialog" aria-label="Navegação">
+            <div className="gc-hub-handle" aria-hidden="true" />
+            <div className="gc-hub-grid">
+              {GC_NAV_ITEMS.map(item => (
+                <button
+                  key={item.value}
+                  type="button"
+                  className={"gc-hub-item" + (subTab === item.value ? " active" : "")}
+                  onClick={() => openTab(item.value)}
+                >
+                  <span className="gc-hub-item-icon">{item.icon(22)}</span>
+                  <span>{item.label === "Lista de Sonhos" ? "Sonhos" : item.label}</span>
+                </button>
+              ))}
+            </div>
+            <div className="gc-hub-footer">
+              {!GC_IS_LOCAL && (
+                <button type="button" className="gc-hub-action" disabled={importing} onClick={importarDadosIniciais}>
+                  <Upload size={16} /> {importing ? "Importando..." : "Importar dados iniciais"}
+                </button>
+              )}
+              <button type="button" className="gc-hub-action danger" onClick={() => { if (!GC_IS_LOCAL && gcAuth) gcAuth.signOut(); }} aria-label="Sair">
+                <LogOut size={16} /> Sair
+              </button>
+            </div>
+          </div>
+        </>
+      )}
       <div className="gc-app">
         <header className="gc-topbar">
-          <button type="button" className={"gc-sidebar-toggle" + (sidebarOpen ? " open" : "")}
-            onClick={() => setSidebarOpen(o => !o)}
-            aria-label={sidebarOpen ? "Fechar menu" : "Abrir menu"} aria-expanded={sidebarOpen}>
-            <GcCoin outline={!sidebarOpen} />
-          </button>
-          <button type="button" className="gc-brand gc-brand-btn" onClick={() => setSubTab("dashboard")} aria-label="Ir para o Dashboard">
+          <button
+            type="button"
+            className={"gc-brand gc-brand-btn" + (hubOpen ? " open" : "")}
+            onClick={() => setHubOpen(o => !o)}
+            aria-label={hubOpen ? "Fechar menu" : "Abrir menu"}
+            aria-expanded={hubOpen}
+          >
             <strong>Guitcoin</strong>
+            <ChevronDown size={16} className="gc-brand-chevron" />
           </button>
           <span className="gc-topbar-spacer" />
-          {(subTab === "dashboard" || subTab === "receitas" || subTab === "despesas") && (
+          {(subTab === "dashboard" || subTab === "receitas" || subTab === "despesas") ? (
             <div className="gc-topbar-filter">
               <button type="button" className={"lb-icon-btn" + (topbarFilterOpen ? " active" : "")}
                 onClick={() => setTopbarFilterOpen(o => !o)}
@@ -2469,7 +2465,7 @@ function App({ session }) {
                 </>
               )}
             </div>
-          )}
+          ) : null}
         </header>
 
         {GC_IS_LOCAL && (
@@ -2536,27 +2532,19 @@ function App({ session }) {
           )}
         </main>
 
-        <nav className="gc-bottomnav">
-          <button type="button" className={"gc-navbtn" + (subTab === "dashboard" ? " active" : "")} onClick={() => setSubTab("dashboard")}>
-            <BarChart3 size={20} /><span>Dashboard</span>
-          </button>
-          <button type="button" className="gc-navfab"
-            onClick={() => {
-              if (subTab === "dashboard") setDashboardFabMenu(true);
-              else if (subTab === "receitas") setSourceForm({ initial: null, competencia: gcReceitasDefaultCompetencia(receitasAno) });
-              else if (subTab === "despesas") setDespesasFabMenu(true);
-              else if (subTab === "recorrencias") setTemplateForm({ initial: null });
-              else if (subTab === "investimentos") setSnapshotForm({ initialCompetencia: competenciaAtual() });
-              else if (subTab === "sonhos") setSonhosFabMenu(true);
-              else if (subTab === "conta") setContaItemForm({ initial: null });
-            }}
-            aria-label={subTab === "dashboard" ? "Adicionar" : subTab === "receitas" ? "Nova fonte de receita" : subTab === "despesas" ? "Nova despesa" : subTab === "recorrencias" ? "Nova recorrência" : subTab === "investimentos" ? "Registrar saldo" : subTab === "sonhos" ? "Adicionar" : subTab === "conta" ? "Novo item da conta" : "Adicionar"}>
-            <Plus size={26} />
-          </button>
-          <button type="button" className={"gc-navbtn" + (subTab === "despesas" ? " active" : "")} onClick={() => setSubTab("despesas")}>
-            <FileText size={20} /><span>Despesas</span>
-          </button>
-        </nav>
+        <button type="button" className="gc-fab"
+          onClick={() => {
+            if (subTab === "dashboard") setDashboardFabMenu(true);
+            else if (subTab === "receitas") setSourceForm({ initial: null, competencia: gcReceitasDefaultCompetencia(receitasAno) });
+            else if (subTab === "despesas") setDespesasFabMenu(true);
+            else if (subTab === "recorrencias") setTemplateForm({ initial: null });
+            else if (subTab === "investimentos") setSnapshotForm({ initialCompetencia: competenciaAtual() });
+            else if (subTab === "sonhos") setSonhosFabMenu(true);
+            else if (subTab === "conta") setContaItemForm({ initial: null });
+          }}
+          aria-label={subTab === "dashboard" ? "Adicionar" : subTab === "receitas" ? "Nova fonte de receita" : subTab === "despesas" ? "Nova despesa" : subTab === "recorrencias" ? "Nova recorrência" : subTab === "investimentos" ? "Registrar saldo" : subTab === "sonhos" ? "Adicionar" : subTab === "conta" ? "Novo item da conta" : "Adicionar"}>
+          <Plus size={26} />
+        </button>
 
         {sourceForm && (
           <GcIncomeSourceForm
@@ -2709,19 +2697,30 @@ ReactDOM.createRoot(document.getElementById("root")).render(<GcRoot />);
 
 <style>
 :root {
-  --gc-accent: #1C7A4D; --gc-accent-deep: #145C3A;
-  --gc-red: #C23B3B; --gc-gold: #B08A2E;
-  --gc-bg: #FFFFFF; --gc-surface: #FFFFFF; --gc-surface-2: #F2F6F3;
-  --gc-line: #E1E8E3; --gc-ink: #13201A; --gc-ink-soft: #6E8079;
-  --radius-sm: 4px; --radius-md: 10px; --radius-lg: 18px; --radius-pill: 999px;
+  --gc-accent: #D4B45A; --gc-accent-deep: #B8953E;
+  --gc-positive: #3ECF8E;
+  --gc-red: #E05555; --gc-gold: #D4B45A;
+  --gc-bg: #0A0A0A; --gc-surface: rgba(255,255,255,.06); --gc-surface-2: rgba(255,255,255,.04);
+  --gc-line: rgba(255,255,255,.12); --gc-ink: #E8E8E8; --gc-ink-soft: #9A9A9A;
+  --gc-on-accent: #111111;
+  --radius-sm: 4px; --radius-md: 12px; --radius-lg: 20px; --radius-pill: 999px;
   --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 20px; --sp-6: 24px; --sp-7: 32px; --sp-8: 40px;
-  --shadow: 0 24px 60px rgba(15,24,19,.24); --shadow-sm: 0 4px 14px rgba(15,24,19,.12);
+  --shadow: 0 24px 60px rgba(0,0,0,.55); --shadow-sm: 0 4px 18px rgba(0,0,0,.35);
   --gc-sat: 0px; --gc-sab: 0px;
   --gc-topbar-h: calc(63px + env(safe-area-inset-top, var(--gc-sat)));
+  --gc-fab-space: calc(72px + env(safe-area-inset-bottom, var(--gc-sab)));
+  --gc-glass-bg: rgba(28,28,28,.72);
+  --gc-glass-blur: 20px;
+}
+.gc-glass {
+  background: var(--gc-glass-bg);
+  -webkit-backdrop-filter: blur(var(--gc-glass-blur));
+  backdrop-filter: blur(var(--gc-glass-blur));
+  border: 1px solid var(--gc-line);
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; }
-body { background: var(--gc-bg); color: var(--gc-ink); font-family: 'EB Garamond', serif; -webkit-font-smoothing: antialiased; }
+body { background: var(--gc-bg); color: var(--gc-ink); font-family: 'EB Garamond', serif; -webkit-font-smoothing: antialiased; color-scheme: dark; }
 button { font: inherit; }
 .gc-mono, .gc-money { font-family: 'Space Grotesk', sans-serif; font-variant-numeric: tabular-nums; }
 
@@ -2739,22 +2738,21 @@ html.gc-iphone-preview body { display: flex; align-items: center; justify-conten
   content: ""; position: absolute; top: 11px; left: 50%; transform: translateX(-50%);
   width: 126px; height: 37px; border-radius: 20px; background: #0b0a09; z-index: 200; pointer-events: none;
 }
-html.gc-iphone-preview #root { height: 100%; background: #fff; }
+html.gc-iphone-preview #root { height: 100%; background: var(--gc-bg); }
 html.gc-iphone-preview .gc-app, html.gc-iphone-preview .gc-login-screen { min-height: 100%; height: 100%; }
-html.gc-iphone-preview .gc-sidebar { max-height: calc(100% - var(--gc-topbar-h) - var(--gc-sab) - 12px); }
 
 /* ---- Primitivas (Modal/Field/Segmented/TabBar/botões), prefixo lb- ---- */
 .lb-btn {
   display: inline-flex; align-items: center; gap: 6px; justify-content: center;
-  padding: 10px 20px; border-radius: var(--radius-pill); border: 1.5px solid var(--gc-ink);
-  background: #fff; color: var(--gc-ink);
+  padding: 10px 20px; border-radius: var(--radius-pill); border: 1.5px solid var(--gc-line);
+  background: var(--gc-surface); color: var(--gc-ink);
   font-family: 'Space Grotesk', sans-serif; font-weight: 600; font-size: 14.5px;
   cursor: pointer; transition: opacity .15s, background .15s, color .15s; white-space: nowrap;
 }
-.lb-btn.primary { background: var(--gc-accent); color: #fff; border-color: var(--gc-accent); }
+.lb-btn.primary { background: var(--gc-accent); color: var(--gc-on-accent); border-color: var(--gc-accent); }
 .lb-btn.primary:disabled { opacity: .4; cursor: not-allowed; }
 .lb-btn.primary:not(:disabled):hover { background: var(--gc-accent-deep); }
-.lb-btn.ghost { background: #fff; border-color: var(--gc-line); color: var(--gc-ink); }
+.lb-btn.ghost { background: transparent; border-color: var(--gc-line); color: var(--gc-ink); }
 .lb-btn.ghost:hover { background: var(--gc-surface-2); }
 .lb-btn.ghost.danger, .lb-btn.danger { color: var(--gc-red); }
 .lb-btn.danger { border-color: transparent; background: none; }
@@ -2766,11 +2764,12 @@ html.gc-iphone-preview .gc-sidebar { max-height: calc(100% - var(--gc-topbar-h) 
 
 .lb-modal-overlay {
   position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; z-index: 50;
-  background: rgba(15,24,19,.42); -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px);
+  background: rgba(0,0,0,.55); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
   padding: calc(20px + env(safe-area-inset-top, var(--gc-sat))) 16px calc(20px + env(safe-area-inset-bottom, var(--gc-sab)));
 }
 .lb-modal {
-  background: #fff; border: 1px solid var(--gc-line); border-radius: var(--radius-lg);
+  background: var(--gc-glass-bg); border: 1px solid var(--gc-line); border-radius: var(--radius-lg);
+  -webkit-backdrop-filter: blur(var(--gc-glass-blur)); backdrop-filter: blur(var(--gc-glass-blur));
   width: 100%; max-width: 460px; max-height: calc(94vh - env(safe-area-inset-top, var(--gc-sat)) - env(safe-area-inset-bottom, var(--gc-sab)));
   display: flex; flex-direction: column; overflow: hidden; box-shadow: var(--shadow);
 }
@@ -2791,14 +2790,14 @@ html.gc-iphone-preview .gc-sidebar { max-height: calc(100% - var(--gc-topbar-h) 
 .lb-field input, .lb-field select {
   -webkit-appearance: none; appearance: none; padding: 11px 15px; border-radius: var(--radius-pill);
   border: 1px solid var(--gc-line); font-size: 16px; font-family: 'Space Grotesk', sans-serif; font-weight: 600;
-  color: var(--gc-ink); background: #fff; min-width: 0; width: 100%; text-overflow: ellipsis;
+  color: var(--gc-ink); background: rgba(255,255,255,.06); min-width: 0; width: 100%; text-overflow: ellipsis;
 }
 .lb-field input::placeholder { color: var(--gc-ink-soft); opacity: .8; }
 .lb-field.headline input { font-family: 'Playfair Display', serif; font-size: 17px; font-weight: 700; }
 .lb-field select { padding-right: 32px; cursor: pointer; }
 .lb-field input:focus, .lb-field select:focus { outline: 1.5px solid var(--gc-accent); outline-offset: 1px; }
 
-.lb-form-footer { grid-column: 1 / -1; position: sticky; bottom: 0; z-index: 3; margin: 0 calc(-1 * var(--sp-5)); padding: var(--sp-4) var(--sp-5) calc(var(--sp-4) + env(safe-area-inset-bottom, var(--gc-sab))); background: #fff; border-top: 1px solid var(--gc-line); display: flex; flex-direction: column; gap: var(--sp-3); }
+.lb-form-footer { grid-column: 1 / -1; position: sticky; bottom: 0; z-index: 3; margin: 0 calc(-1 * var(--sp-5)); padding: var(--sp-4) var(--sp-5) calc(var(--sp-4) + env(safe-area-inset-bottom, var(--gc-sab))); background: rgba(18,18,18,.92); border-top: 1px solid var(--gc-line); display: flex; flex-direction: column; gap: var(--sp-3); }
 .lb-form-actions { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); flex-wrap: wrap; }
 .lb-form-actions-left { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
 .lb-form-actions-right { display: flex; align-items: center; gap: var(--sp-2); margin-left: auto; flex-wrap: wrap; justify-content: flex-end; }
@@ -2806,7 +2805,7 @@ html.gc-iphone-preview .gc-sidebar { max-height: calc(100% - var(--gc-topbar-h) 
 
 .lb-segmented {
   display: flex; justify-content: stretch; gap: 2px;
-  background: var(--gc-line); padding: 3px; border-radius: var(--radius-pill);
+  background: rgba(255,255,255,.08); padding: 3px; border-radius: var(--radius-pill);
   margin: 0 auto; width: 100%; max-width: 100%; overflow-x: auto;
   scrollbar-width: none; -ms-overflow-style: none;
 }
@@ -2821,7 +2820,7 @@ html.gc-iphone-preview .gc-sidebar { max-height: calc(100% - var(--gc-topbar-h) 
 .lb-segmented button:hover { color: var(--gc-ink); }
 .lb-segmented button.muted { opacity: .45; }
 .lb-segmented button.muted.active { opacity: 1; }
-.lb-segmented button.active { background: #fff; color: var(--gc-accent); font-weight: 700; box-shadow: var(--shadow-sm); }
+.lb-segmented button.active { background: rgba(255,255,255,.12); color: var(--gc-accent); font-weight: 700; box-shadow: var(--shadow-sm); }
 .lb-segmented.wrap { flex-wrap: wrap; border-radius: var(--radius-md); max-width: 100%; }
 .lb-segmented.wrap button { padding: 7px 14px; font-size: 13px; }
 .lb-segmented.pairs { display: grid; grid-template-columns: repeat(2, 1fr); border-radius: var(--radius-md); max-width: 100%; overflow: hidden; }
@@ -2851,8 +2850,9 @@ html.gc-iphone-preview .gc-sidebar { max-height: calc(100% - var(--gc-topbar-h) 
 .gc-statcards { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--sp-3); }
 .gc-statcard {
   display: flex; flex-direction: column; align-items: center; gap: 4px; text-align: center;
-  background: #fff; border: 1px solid var(--gc-line); border-radius: var(--radius-md);
+  background: var(--gc-surface); border: 1px solid var(--gc-line); border-radius: var(--radius-md);
   padding: var(--sp-3) var(--sp-2); font: inherit; color: inherit;
+  -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
 }
 button.gc-statcard { cursor: pointer; }
 button.gc-statcard:hover { border-color: var(--gc-accent); }
@@ -2876,16 +2876,16 @@ div.gc-statcard { cursor: default; }
 .gc-pill-icon { padding: 4px; }
 .gc-pill-red { border-color: var(--gc-red); color: var(--gc-red); }
 
-.gc-list { display: flex; flex-direction: column; border: 1px solid var(--gc-line); border-radius: var(--radius-md); overflow: hidden; background: #fff; }
+.gc-list { display: flex; flex-direction: column; border: 1px solid var(--gc-line); border-radius: var(--radius-md); overflow: hidden; background: var(--gc-surface); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); }
 .gc-list-row { display: flex; align-items: center; gap: var(--sp-3); padding: var(--sp-3) var(--sp-4); border-bottom: 1px solid var(--gc-line); }
 .gc-list-row:last-of-type { border-bottom: none; }
 .gc-list-row-main { display: flex; align-items: center; gap: var(--sp-3); flex: 1; min-width: 0; background: none; border: none; padding: 0; cursor: pointer; text-align: left; font: inherit; color: inherit; }
 .gc-list-row-title { font-family: 'Space Grotesk', sans-serif; font-weight: 600; font-size: 14.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .gc-list-row-title-line { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; }
 .gc-list-row-title-line .gc-list-row-title { flex: 0 1 auto; }
-.gc-row-valor { width: 110px; flex-shrink: 0; text-align: right; padding: 8px 10px; border-radius: var(--radius-pill); border: 1px solid var(--gc-line); font-size: 15px; font-weight: 600; color: var(--gc-ink); }
+.gc-row-valor { width: 110px; flex-shrink: 0; text-align: right; padding: 8px 10px; border-radius: var(--radius-pill); border: 1px solid var(--gc-line); font-size: 15px; font-weight: 600; color: var(--gc-ink); background: rgba(255,255,255,.06); }
 .gc-row-valor:focus { outline: 1.5px solid var(--gc-accent); outline-offset: 1px; }
-.gc-row-valor-estimado { border-color: var(--gc-gold); background: color-mix(in srgb, var(--gc-gold) 8%, #fff); }
+.gc-row-valor-estimado { border-color: var(--gc-gold); background: color-mix(in srgb, var(--gc-gold) 14%, transparent); }
 .gc-row-valor-estimado:focus { outline-color: var(--gc-gold); }
 .gc-list-total { display: flex; align-items: center; justify-content: space-between; padding: var(--sp-3) var(--sp-4); background: var(--gc-surface-2); font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 14.5px; }
 .gc-list-more { display: block; width: 100%; padding: var(--sp-3) var(--sp-4); border: none; border-bottom: 1px solid var(--gc-line); background: none; cursor: pointer; text-align: left; font-family: 'Space Grotesk', sans-serif; font-size: 13px; font-weight: 600; color: var(--gc-accent); }
@@ -2895,7 +2895,7 @@ div.gc-statcard { cursor: default; }
 .gc-statcards-1 { grid-template-columns: 1fr; }
 .gc-num-red { color: var(--gc-red); }
 .gc-num-gold { color: var(--gc-gold); }
-.gc-delta-up { color: var(--gc-accent) !important; }
+.gc-delta-up { color: var(--gc-positive) !important; }
 .gc-delta-down { color: var(--gc-red) !important; }
 .gc-delta-flat { color: var(--gc-ink-soft) !important; }
 .gc-invest-row-vals { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
@@ -2911,17 +2911,17 @@ div.gc-statcard { cursor: default; }
 .gc-conta-taxa-pct {
   width: 72px; text-align: right; padding: 8px 10px; border-radius: var(--radius-pill);
   border: 1px solid var(--gc-line); font-family: 'Space Grotesk', sans-serif; font-size: 15px; font-weight: 600; color: var(--gc-ink);
-  font-variant-numeric: tabular-nums;
+  font-variant-numeric: tabular-nums; background: rgba(255,255,255,.06);
 }
 .gc-conta-taxa-pct:focus { outline: 1.5px solid var(--gc-accent); outline-offset: 1px; }
 .gc-conta-taxa-pct:disabled { opacity: .45; background: var(--gc-surface-2); }
 .gc-conta-taxa-suffix { font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 14px; color: var(--gc-ink-soft); }
-.gc-conta-por-pessoa { border-top: 1px solid var(--gc-line); background: #fff; color: var(--gc-accent); }
+.gc-conta-por-pessoa { border-top: 1px solid var(--gc-line); background: var(--gc-surface-2); color: var(--gc-accent); }
 .gc-conta-fields input:disabled { opacity: .55; background: var(--gc-surface-2); cursor: not-allowed; }
 
 .gc-checkbox {
   flex-shrink: 0; width: 24px; height: 24px; border-radius: var(--radius-sm); border: 1.5px solid var(--gc-line);
-  background: #fff; display: flex; align-items: center; justify-content: center; color: #fff; cursor: pointer; padding: 0;
+  background: rgba(255,255,255,.06); display: flex; align-items: center; justify-content: center; color: var(--gc-on-accent); cursor: pointer; padding: 0;
 }
 .gc-checkbox.checked { background: var(--gc-accent); border-color: var(--gc-accent); }
 .gc-row-valor-display { width: 90px; flex-shrink: 0; text-align: right; font-size: 14.5px; font-weight: 600; }
@@ -2933,7 +2933,7 @@ button.gc-list-row-btn:hover { background: var(--gc-surface-2); }
 .gc-list-row-sub { display: block; font-family: 'Space Grotesk', sans-serif; font-weight: 500; font-size: 11.5px; color: var(--gc-ink-soft); text-transform: none; letter-spacing: 0; }
 
 .gc-fab-menu { display: flex; flex-direction: column; gap: var(--sp-2); }
-.gc-fab-option { display: flex; align-items: center; gap: var(--sp-3); padding: var(--sp-3) var(--sp-3); border: 1px solid var(--gc-line); border-radius: var(--radius-md); background: #fff; cursor: pointer; text-align: left; color: var(--gc-accent); }
+.gc-fab-option { display: flex; align-items: center; gap: var(--sp-3); padding: var(--sp-3) var(--sp-3); border: 1px solid var(--gc-line); border-radius: var(--radius-md); background: var(--gc-surface); cursor: pointer; text-align: left; color: var(--gc-accent); }
 .gc-fab-option:hover { background: var(--gc-surface-2); }
 .gc-fab-option-txt { display: flex; flex-direction: column; color: var(--gc-ink); }
 .gc-fab-option-txt strong { font-family: 'Space Grotesk', sans-serif; font-size: 14.5px; }
@@ -2945,8 +2945,9 @@ button.gc-list-row-btn:hover { background: var(--gc-surface-2); }
 
 .gc-receitas-hero {
   display: flex; flex-direction: column; align-items: center; gap: 4px; text-align: center;
-  background: var(--gc-surface-2); border: 1px solid var(--gc-line); border-radius: var(--radius-md);
+  background: var(--gc-surface); border: 1px solid var(--gc-line); border-radius: var(--radius-md);
   padding: var(--sp-5) var(--sp-4);
+  -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
 }
 .gc-receitas-hero-num {
   font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 28px;
@@ -2973,7 +2974,7 @@ button.gc-list-row-btn:hover { background: var(--gc-surface-2); }
 .gc-acc-chevron { color: var(--gc-ink-soft); flex-shrink: 0; transition: transform .15s ease; transform: rotate(-90deg); }
 .gc-acc-chevron.open { transform: rotate(0deg); }
 .gc-acc-total { font-family: 'Space Grotesk', sans-serif; font-weight: 600; font-size: 14px; font-variant-numeric: tabular-nums; color: var(--gc-ink); }
-.gc-acc-body { border-top: 1px solid var(--gc-line); background: #fff; }
+.gc-acc-body { border-top: 1px solid var(--gc-line); background: rgba(0,0,0,.2); }
 .gc-acc-row { padding-left: calc(var(--sp-4) + 24px); }
 .gc-acc-body .gc-list-more { padding-left: calc(var(--sp-4) + 24px); }
 .gc-acc-body .gc-list-total { padding-left: calc(var(--sp-4) + 24px); }
@@ -3025,26 +3026,30 @@ button.gc-list-row-btn:hover { background: var(--gc-surface-2); }
 .gc-cashflow-table th { color: var(--gc-ink-soft); font-weight: 600; text-transform: uppercase; font-size: 10px; letter-spacing: .3px; }
 .gc-cashflow-table tr:last-child td { border-bottom: none; }
 .gc-cashflow-table td:first-child, .gc-cashflow-table th:first-child {
-  text-align: left; font-weight: 700; position: sticky; left: 0; background: #fff; z-index: 1;
+  text-align: left; font-weight: 700; position: sticky; left: 0; background: #121212; z-index: 1;
 }
 .gc-cashflow-total td { font-weight: 700; border-top: 1px solid var(--gc-line); }
 
-/* ---- Shell (topbar, sidebar, bottomnav, login) ---- */
-.gc-app { min-height: 100vh; display: flex; flex-direction: column; padding-top: var(--gc-topbar-h); padding-bottom: calc(78px + env(safe-area-inset-bottom, var(--gc-sab))); }
+/* ---- Shell (topbar, hub sheet, FAB, login) ---- */
+.gc-app { min-height: 100vh; display: flex; flex-direction: column; padding-top: var(--gc-topbar-h); padding-bottom: var(--gc-fab-space); }
 .gc-topbar {
-  position: fixed; top: 0; left: 0; right: 0; z-index: 20; height: var(--gc-topbar-h);
+  position: fixed; top: 0; left: 0; right: 0; z-index: 50; height: var(--gc-topbar-h);
   display: flex; align-items: center; gap: var(--sp-3);
   padding: env(safe-area-inset-top, var(--gc-sat)) var(--sp-5) 0;
-  background: #fff; border-bottom: 1px solid var(--gc-line);
+  background: var(--gc-glass-bg); border-bottom: 1px solid var(--gc-line);
+  -webkit-backdrop-filter: blur(var(--gc-glass-blur)); backdrop-filter: blur(var(--gc-glass-blur));
 }
 .gc-brand { display: flex; align-items: center; gap: 8px; font-family: 'Playfair Display', serif; font-size: 19px; color: var(--gc-ink); }
 .gc-brand strong { font-weight: 700; }
 .gc-brand-btn {
-  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
-  background: none; border: none; padding: 0; margin: 0; cursor: pointer;
-  font-size: 24px; color: var(--gc-ink); line-height: 1;
+  display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0;
+  background: none; border: none; padding: 4px 2px; margin: 0; cursor: pointer;
+  font-size: 20px; color: #F0E6C8; line-height: 1; position: relative;
 }
 .gc-brand-btn:hover { color: var(--gc-accent); }
+.gc-brand-btn.open { color: var(--gc-accent); }
+.gc-brand-chevron { color: inherit; opacity: .75; transition: transform .18s ease; }
+.gc-brand-btn.open .gc-brand-chevron { transform: rotate(180deg); }
 .gc-coin {
   display: inline-flex; align-items: center; justify-content: center;
   flex-shrink: 0; border-radius: 50%; overflow: hidden;
@@ -3054,58 +3059,100 @@ button.gc-list-row-btn:hover { background: var(--gc-surface-2); }
 .gc-coin:not(.outline) img { filter: invert(1); }
 .gc-coin.outline { background: transparent; }
 .gc-topbar-spacer { flex: 1; }
-.gc-topbar-filter { position: relative; flex-shrink: 0; }
+.gc-topbar-filter { position: relative; flex-shrink: 0; z-index: 1; }
 .gc-topbar-filter .lb-icon-btn.active { color: var(--gc-accent); }
 .gc-topbar-filter-backdrop { position: fixed; inset: 0; z-index: 25; }
 .gc-topbar-filter-popover {
   position: absolute; top: calc(100% + 8px); right: 0; z-index: 26;
   min-width: 168px; padding: 10px 12px 12px;
-  background: #fff; border: 1px solid var(--gc-line); border-radius: 10px;
+  background: var(--gc-glass-bg); border: 1px solid var(--gc-line); border-radius: 12px;
   box-shadow: var(--shadow);
+  -webkit-backdrop-filter: blur(var(--gc-glass-blur)); backdrop-filter: blur(var(--gc-glass-blur));
 }
 .gc-topbar-filter-label {
   display: block; font-family: 'Space Grotesk', sans-serif; font-size: 10.5px;
   font-weight: 600; text-transform: uppercase; letter-spacing: .5px;
   color: var(--gc-ink-soft); margin-bottom: 4px; text-align: center;
 }
-.gc-sidebar-toggle { flex-shrink: 0; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; background: none; border: none; color: var(--gc-accent); cursor: pointer; padding: 0; }
-.gc-sidebar-toggle:hover { color: var(--gc-accent-deep); }
 
-.gc-sidebar-backdrop { position: fixed; inset: var(--gc-topbar-h) 0 0 0; background: rgba(15,24,19,.35); z-index: 30; }
-.gc-sidebar {
-  position: fixed; top: var(--gc-topbar-h); left: 0; bottom: 0; z-index: 35; width: min(300px, 84vw);
-  background: #fff; border-right: 1px solid var(--gc-line); box-shadow: var(--shadow);
-  display: flex; flex-direction: column; overflow-y: auto;
-  transform: translateX(-100%); transition: transform .2s ease;
+.gc-hub-backdrop {
+  position: fixed; inset: var(--gc-topbar-h) 0 0 0; z-index: 40;
+  background: rgba(0,0,0,.5); -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px);
 }
-.gc-sidebar.open { transform: translateX(0); }
-.gc-sidebar-nav { display: flex; flex-direction: column; padding: var(--sp-2) 0; }
-.gc-sidebar-label { font-family: 'Space Grotesk', sans-serif; font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .5px; color: var(--gc-ink-soft); padding: var(--sp-4) var(--sp-5) var(--sp-1); }
-.gc-sidebar-nav .gc-sidebar-label:first-child { padding-top: var(--sp-2); }
-.gc-sidebar-spacer { flex: 1; }
-.gc-sidebar-link { display: flex; align-items: center; gap: 12px; width: 100%; padding: 11px var(--sp-5); border: none; background: none; color: var(--gc-ink); font-family: 'Space Grotesk', sans-serif; font-weight: 600; font-size: 14px; text-align: left; cursor: pointer; transition: background .12s ease, color .12s ease; }
-.gc-sidebar-link svg { flex-shrink: 0; color: var(--gc-ink-soft); transition: color .12s ease; }
-.gc-sidebar-link:hover { background: var(--gc-surface-2); color: var(--gc-accent); }
-.gc-sidebar-link:hover svg { color: var(--gc-accent); }
-.gc-sidebar-link.active { color: var(--gc-accent); background: var(--gc-surface-2); }
-.gc-sidebar-link.active svg { color: var(--gc-accent); }
-.gc-sidebar-signout { margin-top: var(--sp-2); padding-top: var(--sp-3); padding-bottom: var(--sp-3); border-top: 1px solid var(--gc-line); color: var(--gc-ink-soft); }
+.gc-hub-sheet {
+  position: fixed; left: 12px; right: 12px; bottom: calc(12px + env(safe-area-inset-bottom, var(--gc-sab)));
+  z-index: 45; max-height: min(70vh, 520px); overflow-y: auto;
+  padding: 10px 14px 16px;
+  border-radius: 24px;
+  background: var(--gc-glass-bg); border: 1px solid rgba(255,255,255,.14);
+  -webkit-backdrop-filter: blur(24px); backdrop-filter: blur(24px);
+  box-shadow: var(--shadow);
+  animation: gc-hub-in .22s ease;
+}
+@keyframes gc-hub-in {
+  from { transform: translateY(18px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+.gc-hub-handle {
+  width: 36px; height: 4px; border-radius: 2px; background: rgba(255,255,255,.22);
+  margin: 4px auto 14px;
+}
+.gc-hub-grid {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px 8px;
+}
+.gc-hub-item {
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  padding: 10px 6px; border: none; background: none; cursor: pointer;
+  color: var(--gc-ink); font-family: 'Space Grotesk', sans-serif; font-weight: 600; font-size: 11px;
+}
+.gc-hub-item-icon {
+  width: 48px; height: 48px; border-radius: 14px;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(255,255,255,.06); border: 1px solid var(--gc-line); color: var(--gc-ink-soft);
+}
+.gc-hub-item.active { color: var(--gc-accent); }
+.gc-hub-item.active .gc-hub-item-icon {
+  background: color-mix(in srgb, var(--gc-accent) 18%, transparent);
+  border-color: color-mix(in srgb, var(--gc-accent) 45%, transparent);
+  color: var(--gc-accent);
+}
+.gc-hub-footer {
+  margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--gc-line);
+  display: flex; flex-direction: column; gap: 2px;
+}
+.gc-hub-action {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  width: 100%; padding: 12px; border: none; background: none; cursor: pointer;
+  font-family: 'Space Grotesk', sans-serif; font-weight: 600; font-size: 13px;
+  color: var(--gc-ink-soft);
+}
+.gc-hub-action:hover { color: var(--gc-ink); }
+.gc-hub-action.danger { color: var(--gc-red); }
+.gc-hub-action:disabled { opacity: .45; cursor: not-allowed; }
 
-.gc-demo-banner { background: var(--gc-surface-2); color: var(--gc-ink-soft); font-family: 'Space Grotesk', sans-serif; font-size: 12.5px; text-align: center; padding: 6px var(--sp-4); }
-.gc-error-banner { display: flex; align-items: center; gap: var(--sp-2); background: #FBECEC; color: var(--gc-red); font-family: 'Space Grotesk', sans-serif; font-size: 13px; padding: 8px var(--sp-4); }
+.gc-demo-banner { background: rgba(212,180,90,.1); color: var(--gc-ink-soft); font-family: 'Space Grotesk', sans-serif; font-size: 12.5px; text-align: center; padding: 6px var(--sp-4); border-bottom: 1px solid var(--gc-line); }
+.gc-error-banner { display: flex; align-items: center; gap: var(--sp-2); background: rgba(224,85,85,.15); color: var(--gc-red); font-family: 'Space Grotesk', sans-serif; font-size: 13px; padding: 8px var(--sp-4); }
 .gc-error-close { margin-left: auto; background: none; border: none; color: inherit; cursor: pointer; display: flex; padding: 2px; }
 
 .gc-main { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: var(--sp-5); max-width: 720px; margin: 0 auto; width: 100%; }
 
-.gc-bottomnav { position: fixed; bottom: 0; left: 0; right: 0; z-index: 15; display: flex; align-items: center; justify-content: space-around; padding: 8px 8px calc(8px + env(safe-area-inset-bottom, var(--gc-sab))); background: #fff; border-top: 1px solid var(--gc-line); }
-.gc-navbtn { display: flex; flex-direction: column; align-items: center; gap: 2px; background: none; border: none; color: var(--gc-ink-soft); font-family: 'Space Grotesk', sans-serif; font-weight: 600; font-size: 11px; padding: 6px 18px; cursor: pointer; }
-.gc-navbtn.active { color: var(--gc-accent); }
-.gc-navfab { width: 52px; height: 52px; border-radius: 50%; background: var(--gc-accent); color: #fff; border: none; display: flex; align-items: center; justify-content: center; box-shadow: var(--shadow-sm); cursor: pointer; margin-top: -22px; }
-.gc-navfab:hover { background: var(--gc-accent-deep); }
+.gc-fab {
+  position: fixed; right: 18px; bottom: calc(18px + env(safe-area-inset-bottom, var(--gc-sab)));
+  z-index: 15; width: 56px; height: 56px; border-radius: 50%;
+  background: var(--gc-accent); color: var(--gc-on-accent); border: none;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 8px 28px rgba(0,0,0,.45); cursor: pointer;
+}
+.gc-fab:hover { background: var(--gc-accent-deep); }
 
-.gc-login-screen { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: var(--sp-5); background: var(--gc-surface-2); }
-.gc-login-card { width: 100%; max-width: 340px; background: #fff; border: 1px solid var(--gc-line); border-radius: var(--radius-lg); box-shadow: var(--shadow-sm); padding: var(--sp-7) var(--sp-6); display: flex; flex-direction: column; gap: var(--sp-4); }
-.gc-login-card .gc-brand { justify-content: center; font-size: 22px; margin-bottom: var(--sp-2); }
+.gc-login-screen { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: var(--sp-5); background: var(--gc-bg); }
+.gc-login-card {
+  width: 100%; max-width: 340px; border-radius: var(--radius-lg); box-shadow: var(--shadow-sm);
+  padding: var(--sp-7) var(--sp-6); display: flex; flex-direction: column; gap: var(--sp-4);
+  background: var(--gc-glass-bg); border: 1px solid var(--gc-line);
+  -webkit-backdrop-filter: blur(var(--gc-glass-blur)); backdrop-filter: blur(var(--gc-glass-blur));
+}
+.gc-login-card .gc-brand { justify-content: center; font-size: 22px; margin-bottom: var(--sp-2); color: #F0E6C8; }
 .gc-login-error { margin: 0; color: var(--gc-red); font-size: 13.5px; }
 </style>
 </body>
