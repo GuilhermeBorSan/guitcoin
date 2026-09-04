@@ -313,12 +313,12 @@ const GC_IS_LOCAL = ["localhost", "127.0.0.1"].includes(location.hostname);
 // os dados são as Security Rules (ver firebase/firestore.rules), não o
 // sigilo da config. ----
 const GC_FIREBASE_CONFIG = {
-  apiKey: "SUA-API-KEY-AQUI",
-  authDomain: "SEU-PROJETO.firebaseapp.com",
-  projectId: "SEU-PROJETO",
-  storageBucket: "SEU-PROJETO.appspot.com",
-  messagingSenderId: "SEU-SENDER-ID",
-  appId: "SEU-APP-ID",
+  apiKey: "AIzaSyDyXrIQdGxCwy4NCgEVH_CvkpnCy2VHg3Q",
+  authDomain: "guitcoin.firebaseapp.com",
+  projectId: "guitcoin",
+  storageBucket: "guitcoin.firebasestorage.app",
+  messagingSenderId: "986197163241",
+  appId: "1:986197163241:web:b306f3f727729fc1828478",
 };
 const gcFirebaseApp = window.firebase && !GC_IS_LOCAL ? window.firebase.initializeApp(GC_FIREBASE_CONFIG) : null;
 const gcAuth = gcFirebaseApp ? window.firebase.auth() : null;
