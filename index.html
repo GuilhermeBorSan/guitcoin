@@ -957,8 +957,11 @@ function GcDespesas({ instances, competencia, onCompetenciaChange, onTogglePago,
                   </button>
                   <button type="button" className="gc-list-row-main" onClick={() => onEditInstance(inst)}>
                     <span className="gc-list-row-title">{inst.descricao}</span>
+                    {inst.templateId && (
+                      <span className="gc-pill gc-pill-muted gc-pill-icon" title="Recorrente" aria-label="Recorrente"><Repeat size={11} /></span>
+                    )}
                     {inst.compartilhado && (
-                      <span className="gc-pill gc-pill-gold">Dividido{inst.compartilhadoCom ? " · " + inst.compartilhadoCom : ""}</span>
+                      <span className="gc-pill gc-pill-gold">{inst.compartilhadoCom || "Dividido"}</span>
                     )}
                   </button>
                   <span className="gc-row-valor-display gc-money">{gcFmtMoney(inst.valor)}</span>
@@ -2011,6 +2014,8 @@ div.gc-statcard { cursor: default; }
 
 .gc-pill { display: inline-flex; align-items: center; padding: 3px 10px; border-radius: var(--radius-pill); border: 1px solid var(--gc-accent); color: var(--gc-accent); font-family: 'Space Grotesk', sans-serif; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .3px; flex-shrink: 0; }
 .gc-pill-gold { border-color: var(--gc-gold); color: var(--gc-gold); }
+.gc-pill-muted { border-color: var(--gc-line); color: var(--gc-ink-soft); }
+.gc-pill-icon { padding: 4px; }
 .gc-pill-red { border-color: var(--gc-red); color: var(--gc-red); }
 
 .gc-list { display: flex; flex-direction: column; border: 1px solid var(--gc-line); border-radius: var(--radius-md); overflow: hidden; background: #fff; }
