@@ -445,6 +445,18 @@ const GC_FIREBASE_CONFIG = {
 const gcFirebaseApp = window.firebase && !GC_IS_LOCAL ? window.firebase.initializeApp(GC_FIREBASE_CONFIG) : null;
 const gcAuth = gcFirebaseApp ? window.firebase.auth() : null;
 const gcFirestore = gcFirebaseApp ? window.firebase.firestore() : null;
+// Persistência offline (IndexedDB): sem isso, uma escrita feita bem antes de
+// fechar a aba/app (ex.: marcar uma despesa como paga) fica só na fila em
+// memória do SDK — se a aba fechar antes do fetch pro Firestore terminar, a
+// escrita se perde e o app "esquece" o toggle ao reabrir. Com persistência
+// habilitada o SDK grava a fila em IndexedDB e reenvia sozinho quando a rede
+// (ou a aba) voltar. `synchronizeTabs` evita cada aba aberta brigar por dono
+// da persistência; `.catch` é mudo de propósito (falha comum em modo
+// anônimo/múltiplas abas antigas sem synchronizeTabs) — pior caso, cai de
+// volta pro comportamento anterior, sem quebrar o app.
+if (gcFirestore) {
+  gcFirestore.enablePersistence({ synchronizeTabs: true }).catch(() => {});
+}
 
 // Corre uma promessa contra um timeout, pra nenhuma tela ficar presa pra
 // sempre em "Carregando..." se a rede cair no meio de uma chamada.
