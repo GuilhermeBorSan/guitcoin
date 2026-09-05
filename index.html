@@ -606,8 +606,12 @@ async function gcUpsertMany(session, colecao, objs) {
 async function gcDeleteOne(session, colecao, id) {
   await gcCollectionRef(session, colecao).doc(id).delete();
 }
+// set(..., {merge:true}) em vez de update(): update() lança "not-found" se o
+// doc ainda não existir no servidor (ex.: instância lazy recém-gerada cujo
+// upsert em loadData ainda não confirmou) — merge cria o campo faltante sem
+// exigir isso, fechando uma falha real no toggle de "pago"/"comprado".
 async function gcUpdateFields(session, colecao, id, fields) {
-  await gcCollectionRef(session, colecao).doc(id).update(fields);
+  await gcCollectionRef(session, colecao).doc(id).set(fields, { merge: true });
 }
 
 // ---- Fila de toggles pendentes em localStorage: reforço específico pro
@@ -884,6 +888,25 @@ function useGcData(session) {
 
   useEffect(() => { loadData(); }, [session]);
 
+  // Reforço extra pra fila de toggles pendentes: gcFlushPendingToggles só
+  // roda dentro de loadData() (mount/troca de session). Se o app só for
+  // suspenso (não morto) e voltar sem remontar, uma entrada que ficou
+  // pendente por um erro transitório (ex.: sem rede no momento do toque)
+  // nunca seria reprocessada até o próximo reload completo. Tenta reenviar
+  // assim que o app fica oculto (visibilitychange) ou está prestes a
+  // descarregar (pagehide) — best-effort, sem bloquear a navegação.
+  useEffect(() => {
+    if (GC_IS_LOCAL || !session) return;
+    const tentarReenviar = () => { gcFlushPendingToggles(session, {}).catch(() => {}); };
+    const onVisibility = () => { if (document.hidden) tentarReenviar(); };
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("pagehide", tentarReenviar);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("pagehide", tentarReenviar);
+    };
+  }, [session]);
+
   const saveExpenseCategory = async (categoria) => {
     setExpenseCategories(prev => prev.some(c => c.id === categoria.id) ? prev.map(c => c.id === categoria.id ? categoria : c) : [...prev, categoria]);
     if (GC_IS_LOCAL) return true;
@@ -991,14 +1014,20 @@ function useGcData(session) {
   const toggleExpenseInstancePago = async (id) => {
     let next = null;
     setExpenseInstances(prev => prev.map(i => { if (i.id !== id) return i; next = { ...i, pago: !i.pago }; return next; }));
+    console.log("[gc-toggle] expense_instances", id, "otimista aplicado, pago=", next && next.pago);
     if (GC_IS_LOCAL) return true;
     if (!next) return false;
     gcQueuePendingToggle("expense_instances", id, "pago", next.pago);
+    console.log("[gc-toggle] expense_instances", id, "enfileirado no localStorage");
     try {
       await gcUpdateFields(session, "expense_instances", id, { pago: next.pago });
       gcClearPendingToggle("expense_instances", id, "pago");
+      console.log("[gc-toggle] expense_instances", id, "escrita confirmada, removido da fila");
       return true;
-    } catch (err) { console.error(err); setError(gcWriteErrorMsg(err, "marcar a despesa como paga")); await loadData(); return false; }
+    } catch (err) {
+      console.error("[gc-toggle] expense_instances", id, "escrita falhou", err);
+      setError(gcWriteErrorMsg(err, "marcar a despesa como paga")); await loadData(); return false;
+    }
   };
 
   const saveInvestmentSnapshot = async (snapshot) => {
@@ -1025,14 +1054,20 @@ function useGcData(session) {
   const toggleWishlistComprado = async (id) => {
     let next = null;
     setWishlistItems(prev => prev.map(i => { if (i.id !== id) return i; next = { ...i, comprado: !i.comprado }; return next; }));
+    console.log("[gc-toggle] wishlist_items", id, "otimista aplicado, comprado=", next && next.comprado);
     if (GC_IS_LOCAL) return true;
     if (!next) return false;
     gcQueuePendingToggle("wishlist_items", id, "comprado", next.comprado);
+    console.log("[gc-toggle] wishlist_items", id, "enfileirado no localStorage");
     try {
       await gcUpdateFields(session, "wishlist_items", id, { comprado: next.comprado });
       gcClearPendingToggle("wishlist_items", id, "comprado");
+      console.log("[gc-toggle] wishlist_items", id, "escrita confirmada, removido da fila");
       return true;
-    } catch (err) { console.error(err); setError(gcWriteErrorMsg(err, "marcar o item como comprado")); await loadData(); return false; }
+    } catch (err) {
+      console.error("[gc-toggle] wishlist_items", id, "escrita falhou", err);
+      setError(gcWriteErrorMsg(err, "marcar o item como comprado")); await loadData(); return false;
+    }
   };
 
   const saveWishlistSavingsSnapshot = async (snapshot) => {
@@ -1468,16 +1503,12 @@ function GcDespesas({ instances, categories, competencia, onTogglePago, onSaveVa
                 const pendente = !gcValorConfirmado(inst);
                 return (
                   <div className="gc-list-row" key={inst.id}>
-                    <label className="gc-checkbox-wrap">
-                      <input
-                        type="checkbox"
-                        className="gc-checkbox-input"
-                        checked={!!inst.pago}
-                        onChange={() => onTogglePago(inst.id)}
-                        aria-label={inst.pago ? `Marcar ${inst.descricao} como não paga` : `Marcar ${inst.descricao} como paga`}
-                      />
-                      <span className="gc-checkbox-box"><Check size={14} /></span>
-                    </label>
+                    <GcCheckbox
+                      checked={inst.pago}
+                      onChange={() => onTogglePago(inst.id)}
+                      ariaLabel={inst.pago ? `Marcar ${inst.descricao} como não paga` : `Marcar ${inst.descricao} como paga`}
+                      icon={<Check size={14} />}
+                    />
                     <button type="button" className="gc-list-row-main" onClick={() => onEditInstance(inst)}>
                       <span className="gc-list-row-grow">
                         <span className="gc-list-row-title-line">
@@ -2043,9 +2074,13 @@ function GcSonhos({ items, savingsSnapshots, onToggleComprado, onEdit, onEditSav
               <div className="gc-list">
                 {g.items.map(item => (
                   <div className="gc-list-row" key={item.id}>
-                    <button type="button" className="gc-checkbox" onClick={() => onToggleComprado(item.id)} aria-label={`Marcar ${item.produto} como comprado`}>
-                      <Gift size={13} />
-                    </button>
+                    <GcCheckbox
+                      checked={item.comprado}
+                      onChange={() => onToggleComprado(item.id)}
+                      ariaLabel={`Marcar ${item.produto} como comprado`}
+                      icon={<Gift size={13} />}
+                      alwaysShowIcon
+                    />
                     <button type="button" className="gc-list-row-main" onClick={() => onEdit(item)}>
                       <span className="gc-list-row-title">{item.produto}</span>
                       {(item.marca || item.modelo) && <span className="gc-list-row-sub">{[item.marca, item.modelo].filter(Boolean).join(" · ")}</span>}
@@ -2222,6 +2257,28 @@ function GcColumnsGrouped({ items }) {
         </div>
       ))}
     </div>
+  );
+}
+
+// Checkbox único do app: input nativo controlado (o navegador cuida do
+// toggle no próprio nível do controle de formulário — mais robusto do que
+// um <button> sintético a um app ser suspenso logo após o toque), com a
+// caixinha visual (borda/preenchimento + ícone) feita em CSS por cima via
+// .gc-checkbox-wrap/-input/-box. Usado em Despesas (pago), Lista de Sonhos
+// (comprado) e no toggle de taxa de serviço da Conta Dividida — um só lugar
+// pra evitar reintroduzir o <button> antigo em algum desses de novo.
+function GcCheckbox({ checked, onChange, ariaLabel, icon, alwaysShowIcon }) {
+  return (
+    <label className="gc-checkbox-wrap">
+      <input
+        type="checkbox"
+        className="gc-checkbox-input"
+        checked={!!checked}
+        onChange={onChange}
+        aria-label={ariaLabel}
+      />
+      <span className={"gc-checkbox-box" + (alwaysShowIcon ? " gc-checkbox-box-static" : "")}>{icon}</span>
+    </label>
   );
 }
 
@@ -2460,10 +2517,12 @@ function GcConta({
         {temItens && <p className="lb-hint gc-conta-hint-left">Limpe os itens pra usar o total da conta.</p>}
 
         <div className="gc-conta-taxa-row">
-          <button type="button" className={"gc-checkbox" + (comTaxa ? " checked" : "")}
-            onClick={() => setComTaxa(v => !v)} aria-pressed={comTaxa} aria-label="Incluir taxa de serviço">
-            {comTaxa && <Check size={14} />}
-          </button>
+          <GcCheckbox
+            checked={comTaxa}
+            onChange={() => setComTaxa(v => !v)}
+            ariaLabel="Incluir taxa de serviço"
+            icon={<Check size={14} />}
+          />
           <span className="gc-conta-taxa-label">Taxa de serviço</span>
           <input
             className="gc-conta-taxa-pct"
@@ -3604,16 +3663,12 @@ div.gc-statcard { cursor: default; }
 .gc-trip-participante-row input:not(.gc-trip-participante-cor) { flex: 1; min-width: 0; padding: 9px 12px; border-radius: var(--radius-pill); border: 1px solid var(--gc-line); font-family: 'Space Grotesk', sans-serif; font-size: 14px; font-weight: 600; color: var(--gc-ink); background: rgba(255,255,255,.06); }
 .gc-trip-participante-cor { flex-shrink: 0; width: 32px; height: 32px; padding: 0; border: 1px solid var(--gc-line); border-radius: var(--radius-sm); background: none; cursor: pointer; }
 
-.gc-checkbox {
-  flex-shrink: 0; width: 24px; height: 24px; border-radius: var(--radius-sm); border: 1.5px solid var(--gc-line);
-  background: rgba(255,255,255,.06); display: flex; align-items: center; justify-content: center; color: var(--gc-on-accent); cursor: pointer; padding: 0;
-}
-.gc-checkbox.checked { background: var(--gc-accent); border-color: var(--gc-accent); }
-/* Despesas: input nativo em vez de <button> — o toque num controle de
-   formulário de verdade é tratado pelo próprio navegador (inclusive quando
-   o app é suspenso/fechado logo depois do toque), evitando o toggle
-   "voltar" desmarcado que acontecia com o <button> sintético. O quadrado
-   verde/borda é só aparência (input fica transparente por cima). */
+/* GcCheckbox (componente único de toggle do app): input nativo em vez de
+   <button> — o toque num controle de formulário de verdade é tratado pelo
+   próprio navegador (inclusive quando o app é suspenso/fechado logo depois
+   do toque), evitando o toggle "voltar" desmarcado que acontecia com o
+   <button> sintético. O quadrado verde/borda é só aparência (input fica
+   transparente por cima, .gc-checkbox-box desenha o visual). */
 .gc-checkbox-wrap { position: relative; flex-shrink: 0; width: 24px; height: 24px; }
 .gc-checkbox-input { position: absolute; inset: 0; margin: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
 .gc-checkbox-box {
@@ -3623,6 +3678,10 @@ div.gc-statcard { cursor: default; }
 .gc-checkbox-input:checked + .gc-checkbox-box { background: var(--gc-accent); border-color: var(--gc-accent); }
 .gc-checkbox-box svg { display: none; }
 .gc-checkbox-input:checked + .gc-checkbox-box svg { display: block; }
+/* alwaysShowIcon (Lista de Sonhos): o ícone (presente/gift) é só um rótulo
+   visual do que o toggle faz, não um indicador de estado — ao contrário do
+   check de Despesas/Conta Dividida, ele fica visível mesmo desmarcado. */
+.gc-checkbox-box-static svg { display: block; }
 .gc-row-valor-display { width: 90px; flex-shrink: 0; text-align: right; font-size: 14.5px; font-weight: 600; }
 
 button.gc-list-row-btn { background: none; border: none; width: 100%; text-align: left; cursor: pointer; font: inherit; color: inherit; border-bottom: 1px solid var(--gc-line); }
