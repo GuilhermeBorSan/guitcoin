@@ -2256,17 +2256,43 @@ function GcWishlistItemForm({ initial, onSave, onDelete, onClose }) {
 ----------------------------------------------------------------*/
 function GcColumnsGrouped({ items }) {
   const max = Math.max(...items.flatMap(i => [i.a, i.b]), 1);
+  // Eixo Y de 1000 em 1000 (arredondado pra cima até cobrir o maior valor do
+  // mês) + uma única linha extra em 500, sem repetir a cada 1500/2500/...
+  // (pedido do Gui: só uma referência de "meio caminho" perto da base).
+  const axisTop = Math.max(Math.ceil(max / 1000) * 1000, 1000);
+  const majorTicks = [];
+  for (let v = 0; v <= axisTop; v += 1000) majorTicks.push(v);
   return (
-    <div className="gc-cols">
-      {items.map(it => (
-        <div className="gc-col" key={it.label}>
-          <div className="gc-col-track gc-col-track-grouped">
-            <div className="gc-col-fill gc-col-fill-a" style={{ height: it.a ? Math.max((it.a / max) * 100, 4) + "%" : "0%" }} />
-            <div className="gc-col-fill gc-col-fill-b" style={{ height: it.b ? Math.max((it.b / max) * 100, 4) + "%" : "0%" }} />
-          </div>
-          <span className="gc-col-label">{it.label}</span>
+    <div className="gc-cols-wrap">
+      <div className="gc-cols-axis">
+        <div className="gc-cols-axis-plot">
+          {majorTicks.map(v => (
+            <span key={v} className="gc-cols-axis-label" style={{ bottom: (v / axisTop) * 100 + "%" }}>
+              {gcFmtMoneyCompact(v)}
+            </span>
+          ))}
+          <span className="gc-cols-axis-label gc-cols-axis-label-minor" style={{ bottom: (500 / axisTop) * 100 + "%" }}>
+            {gcFmtMoneyCompact(500)}
+          </span>
         </div>
-      ))}
+      </div>
+      <div className="gc-cols">
+        <div className="gc-cols-grid">
+          {majorTicks.map(v => (
+            <div key={v} className="gc-cols-gridline" style={{ bottom: (v / axisTop) * 100 + "%" }} />
+          ))}
+          <div className="gc-cols-gridline gc-cols-gridline-minor" style={{ bottom: (500 / axisTop) * 100 + "%" }} />
+        </div>
+        {items.map(it => (
+          <div className="gc-col" key={it.label}>
+            <div className="gc-col-track gc-col-track-grouped">
+              <div className="gc-col-fill gc-col-fill-a" style={{ height: it.a ? Math.max((it.a / axisTop) * 100, 4) + "%" : "0%" }} />
+              <div className="gc-col-fill gc-col-fill-b" style={{ height: it.b ? Math.max((it.b / axisTop) * 100, 4) + "%" : "0%" }} />
+            </div>
+            <span className="gc-col-label">{it.label}</span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -3758,11 +3784,23 @@ button.gc-list-row-btn:hover { background: var(--gc-surface-2); }
 .gc-dashboard-section { display: flex; flex-direction: column; gap: var(--sp-3); }
 .gc-section-title { margin: 0; font-family: 'Playfair Display', serif; font-weight: 700; font-size: 16px; color: var(--gc-ink); }
 
-.gc-cols { display: flex; align-items: flex-end; height: 140px; gap: 4px; }
+.gc-cols-wrap { display: flex; gap: 6px; }
+.gc-cols-axis { position: relative; flex-shrink: 0; width: 32px; height: 140px; }
+.gc-cols-axis-plot { position: absolute; left: 0; right: 0; top: 0; bottom: 18px; }
+.gc-cols-axis-label {
+  position: absolute; right: 2px; bottom: 0; transform: translateY(50%);
+  font-family: 'Space Grotesk', sans-serif; font-size: 9px; color: var(--gc-ink-soft);
+  white-space: nowrap;
+}
+.gc-cols-axis-label-minor { font-size: 8px; opacity: .6; }
+.gc-cols { position: relative; display: flex; align-items: flex-end; height: 140px; gap: 4px; flex: 1; min-width: 0; }
+.gc-cols-grid { position: absolute; left: 0; right: 0; top: 0; bottom: 18px; pointer-events: none; }
+.gc-cols-gridline { position: absolute; left: 0; right: 0; bottom: 0; height: 1px; background: var(--gc-line); }
+.gc-cols-gridline-minor { height: 0; background: none; border-top: 1px dashed var(--gc-line); opacity: .7; }
 .gc-col { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; height: 100%; }
 .gc-col-track { flex: 1; width: 100%; display: flex; align-items: flex-end; justify-content: center; }
 .gc-col-fill { width: 60%; max-width: 22px; border-radius: 3px 3px 0 0; background: linear-gradient(180deg, var(--gc-accent), var(--gc-gold)); }
-.gc-col-label { margin-top: 6px; font-family: 'Space Grotesk', sans-serif; font-size: 10px; color: var(--gc-ink-soft); }
+.gc-col-label { margin-top: 6px; height: 12px; line-height: 12px; font-family: 'Space Grotesk', sans-serif; font-size: 10px; color: var(--gc-ink-soft); }
 .gc-col-track-grouped { gap: 2px; }
 .gc-col-fill-a { max-width: 10px; background: var(--gc-accent); }
 .gc-col-fill-b { max-width: 10px; background: var(--gc-red); }
