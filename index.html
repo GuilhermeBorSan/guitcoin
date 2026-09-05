@@ -1747,13 +1747,13 @@ function GcExpenseTemplateForm({ initial, categories, onSave, onDelete, onClose 
       id: initial ? initial.id : uid(),
       nome: nome.trim(), grupo, frequencia,
       mesCobranca: frequencia === "anual" ? parseInt(mesCobranca, 10) : null,
-      diaVencimento: initial ? initial.diaVencimento : null,
+      diaVencimento: (initial && initial.diaVencimento) || null,
       valorTipo,
       valorPadrao: parseFloat(String(valorPadrao).replace(",", ".")) || 0,
       compartilhado, compartilhadoCom: compartilhado ? compartilhadoCom : "",
       minhaParcelaPct: compartilhado ? (parseFloat(minhaParcelaPct) || 0) : 100,
       ativo, dataInicio, dataFim: dataFim || null,
-      observacao: initial ? initial.observacao : "",
+      observacao: (initial && initial.observacao) || "",
     });
     setBusy(false);
     if (ok !== false) onClose();
