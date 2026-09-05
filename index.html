@@ -1839,6 +1839,10 @@ function GcInvestimentos({ snapshots, onEdit }) {
     value: s.saldo || 0,
     id: s.competencia,
   }));
+  // Mostra, além do último saldo, o saldo de Janeiro do ano corrente (pra
+  // comparar início x situação atual do ano) — pedido do Gui.
+  const anoAtualJan = competenciaAtual().slice(0, 4) + "-01";
+  const janIndex = asc.findIndex(s => s.competencia === anoAtualJan);
 
   return (
     <div className="gc-screen">
@@ -1858,7 +1862,7 @@ function GcInvestimentos({ snapshots, onEdit }) {
       {chartItems.length >= 2 && (
         <div className="gc-dashboard-section">
           <h3 className="gc-section-title">Evolução</h3>
-          <GcAreaChart items={chartItems} showValues />
+          <GcAreaChart items={chartItems} showValues janIndex={janIndex} />
         </div>
       )}
 
@@ -2179,7 +2183,7 @@ function GcColumnsGrouped({ items }) {
   );
 }
 
-function GcAreaChart({ items, showValues, onClick }) {
+function GcAreaChart({ items, showValues, janIndex, onClick }) {
   const max = Math.max(...items.map(i => i.value), 1);
   const w = 300, h = 120, padX = 6, padTop = showValues ? 16 : 6, padBottom = 6;
   const stepX = items.length > 1 ? (w - padX * 2) / (items.length - 1) : 0;
@@ -2208,6 +2212,12 @@ function GcAreaChart({ items, showValues, onClick }) {
         </svg>
         {showValues && lastIdx >= 0 && (
           <div className="gc-area-values" aria-hidden="true">
+            {janIndex != null && janIndex >= 0 && janIndex !== lastIdx && (
+              <span
+                className="gc-area-values-jan"
+                style={{ left: (pontos[janIndex][0] / w) * 100 + "%", top: (pontos[janIndex][1] / h) * 100 + "%" }}
+              >{gcFmtMoneyCompact(items[janIndex].value)}</span>
+            )}
             <span
               style={{ left: (pontos[lastIdx][0] / w) * 100 + "%", top: (pontos[lastIdx][1] / h) * 100 + "%" }}
             >{gcFmtMoneyCompact(items[lastIdx].value)}</span>
@@ -2321,6 +2331,7 @@ function GcDashboard({ incomeEntries, expenseInstances, investmentSnapshots, ano
           <GcAreaChart
             items={investChartItems}
             showValues
+            janIndex={0}
             onClick={onOpenInvestimentos}
           />
         </div>
@@ -3653,6 +3664,7 @@ button.gc-list-row-btn:hover { background: var(--gc-surface-2); }
   white-space: nowrap;
   line-height: 1;
 }
+.gc-area-values-jan { color: var(--gc-ink-soft); }
 .gc-area-labels { display: flex; justify-content: space-between; }
 .gc-area-label { font-family: 'Space Grotesk', sans-serif; font-size: 10px; color: var(--gc-ink-soft); text-align: center; line-height: 1; }
 
