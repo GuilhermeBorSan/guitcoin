@@ -1465,7 +1465,8 @@ function GcDespesas({ instances, categories, competencia, onTogglePago, onSaveVa
   const grupos = gcGroupInstances(instances, competencia, categories);
   const totalMes = gcMonthInstancesTotal(instances, competencia);
   const custoMes = gcCustoMes(instances, competencia);
-  const aConfirmar = gcInstancesForCompetencia(instances, competencia).filter(i => !gcValorConfirmado(i)).length;
+  const instancesMes = gcInstancesForCompetencia(instances, competencia);
+  const pagasCount = instancesMes.filter(i => i.pago).length;
 
   return (
     <div className="gc-screen">
@@ -1479,8 +1480,8 @@ function GcDespesas({ instances, categories, competencia, onTogglePago, onSaveVa
           <span className="gc-statcard-cap">Meu custo (após divisão)</span>
         </div>
         <div className="gc-statcard">
-          <span className={"gc-statcard-num" + (aConfirmar > 0 ? " gc-num-gold" : "")}>{aConfirmar}</span>
-          <span className="gc-statcard-cap">A confirmar</span>
+          <span className={"gc-statcard-num" + (instancesMes.length > 0 && pagasCount === instancesMes.length ? " gc-num-accent" : "")}>{pagasCount}/{instancesMes.length}</span>
+          <span className="gc-statcard-cap">Pagas</span>
         </div>
       </div>
 
@@ -3616,6 +3617,7 @@ div.gc-statcard { cursor: default; }
 .gc-statcards-1 { grid-template-columns: 1fr; }
 .gc-num-red { color: var(--gc-red); }
 .gc-num-gold { color: var(--gc-gold); }
+.gc-num-accent { color: var(--gc-accent); }
 .gc-delta-up { color: var(--gc-positive) !important; }
 .gc-delta-down { color: var(--gc-red) !important; }
 .gc-delta-flat { color: var(--gc-ink-soft) !important; }
