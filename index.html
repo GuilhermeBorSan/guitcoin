@@ -2960,17 +2960,18 @@ function App({ session }) {
     const marcandoComprado = !item.comprado;
     if (marcandoComprado && item.preco != null && Number(item.preco) > 0) {
       const descontar = window.confirm(`Descontar ${gcFmtMoney(item.preco)} da Poupança Sonhos?`);
-      if (descontar) {
-        const comp = competenciaAtual();
-        const found = gcFindWishlistSavingsSnapshot(wishlistSavingsSnapshots, comp);
-        const base = found ? (found.saldo || 0) : gcSaldoPoupancaSonhos(wishlistSavingsSnapshots);
-        await saveWishlistSavingsSnapshot({
-          id: found ? found.id : uid(),
-          competencia: comp,
-          saldo: Math.max(0, base - Number(item.preco)),
-          observacao: found ? (found.observacao || "") : "",
-        });
-      }
+      // Cancelar aqui cancela a marcação inteira (não só o desconto) — senão
+      // o item some da lista mesmo com o Gui tendo apertado "Cancelar".
+      if (!descontar) return;
+      const comp = competenciaAtual();
+      const found = gcFindWishlistSavingsSnapshot(wishlistSavingsSnapshots, comp);
+      const base = found ? (found.saldo || 0) : gcSaldoPoupancaSonhos(wishlistSavingsSnapshots);
+      await saveWishlistSavingsSnapshot({
+        id: found ? found.id : uid(),
+        competencia: comp,
+        saldo: Math.max(0, base - Number(item.preco)),
+        observacao: found ? (found.observacao || "") : "",
+      });
     }
     await toggleWishlistComprado(id);
   };
