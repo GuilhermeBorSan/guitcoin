@@ -1849,7 +1849,7 @@ function GcInvestimentos({ snapshots, onEdit }) {
       <div className="gc-statcards gc-statcards-2">
         <div className="gc-statcard">
           <span className="gc-statcard-num gc-money">{gcFmtMoney(saldoEmCaixa)}</span>
-          <span className="gc-statcard-cap">Saldo em Caixa</span>
+          <span className="gc-statcard-cap">Total Investido</span>
         </div>
         <div className="gc-statcard">
           <span className={"gc-statcard-num" + (ultimoPar ? " " + gcDeltaTone(ultimoPar.delta) : "")}>
@@ -2264,7 +2264,7 @@ function GcDashboard({ incomeEntries, expenseInstances, investmentSnapshots, ano
         </div>
         <div className="gc-statcard">
           <span className="gc-statcard-num gc-money">{gcFmtMoney(saldoEmCaixa)}</span>
-          <span className="gc-statcard-cap">Saldo em Caixa</span>
+          <span className="gc-statcard-cap">Total Investido</span>
         </div>
         <div className="gc-statcard">
           <span className="gc-statcard-num">{fmtPct(poderDeCompra)}</span>
