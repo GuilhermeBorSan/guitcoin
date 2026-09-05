@@ -1468,11 +1468,16 @@ function GcDespesas({ instances, categories, competencia, onTogglePago, onSaveVa
                 const pendente = !gcValorConfirmado(inst);
                 return (
                   <div className="gc-list-row" key={inst.id}>
-                    <button type="button" className={"gc-checkbox" + (inst.pago ? " checked" : "")}
-                      onClick={() => onTogglePago(inst.id)}
-                      aria-label={inst.pago ? `Marcar ${inst.descricao} como não paga` : `Marcar ${inst.descricao} como paga`}>
-                      {inst.pago && <Check size={14} />}
-                    </button>
+                    <label className="gc-checkbox-wrap">
+                      <input
+                        type="checkbox"
+                        className="gc-checkbox-input"
+                        checked={!!inst.pago}
+                        onChange={() => onTogglePago(inst.id)}
+                        aria-label={inst.pago ? `Marcar ${inst.descricao} como não paga` : `Marcar ${inst.descricao} como paga`}
+                      />
+                      <span className="gc-checkbox-box"><Check size={14} /></span>
+                    </label>
                     <button type="button" className="gc-list-row-main" onClick={() => onEditInstance(inst)}>
                       <span className="gc-list-row-grow">
                         <span className="gc-list-row-title-line">
@@ -3603,6 +3608,20 @@ div.gc-statcard { cursor: default; }
   background: rgba(255,255,255,.06); display: flex; align-items: center; justify-content: center; color: var(--gc-on-accent); cursor: pointer; padding: 0;
 }
 .gc-checkbox.checked { background: var(--gc-accent); border-color: var(--gc-accent); }
+/* Despesas: input nativo em vez de <button> — o toque num controle de
+   formulário de verdade é tratado pelo próprio navegador (inclusive quando
+   o app é suspenso/fechado logo depois do toque), evitando o toggle
+   "voltar" desmarcado que acontecia com o <button> sintético. O quadrado
+   verde/borda é só aparência (input fica transparente por cima). */
+.gc-checkbox-wrap { position: relative; flex-shrink: 0; width: 24px; height: 24px; }
+.gc-checkbox-input { position: absolute; inset: 0; margin: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+.gc-checkbox-box {
+  position: absolute; inset: 0; border-radius: var(--radius-sm); border: 1.5px solid var(--gc-line);
+  background: rgba(255,255,255,.06); display: flex; align-items: center; justify-content: center; color: var(--gc-on-accent); pointer-events: none;
+}
+.gc-checkbox-input:checked + .gc-checkbox-box { background: var(--gc-accent); border-color: var(--gc-accent); }
+.gc-checkbox-box svg { display: none; }
+.gc-checkbox-input:checked + .gc-checkbox-box svg { display: block; }
 .gc-row-valor-display { width: 90px; flex-shrink: 0; text-align: right; font-size: 14.5px; font-weight: 600; }
 
 button.gc-list-row-btn { background: none; border: none; width: 100%; text-align: left; cursor: pointer; font: inherit; color: inherit; border-bottom: 1px solid var(--gc-line); }
