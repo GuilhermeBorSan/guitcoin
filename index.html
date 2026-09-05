@@ -361,6 +361,14 @@ function gcFindWishlistSavingsSnapshot(snapshots, competencia) {
 function gcSaldoPoupancaSonhos(snapshots) {
   return gcSaldoEmCaixa(snapshots);
 }
+// Poder de Compra em Sonhos NÃO usa GC_PODER_COMPRA_BASE (essa base é só do
+// Dashboard/Investimentos) — aqui é literal: quantos % do total da Lista de
+// Sonhos (soma dos itens não comprados) a Poupança Sonhos já cobre.
+// Sem itens na lista, não há o que comprar: retorna 0 em vez de dividir por 0.
+function gcPoderDeCompraSonhos(saldoPoupanca, totalLista) {
+  if (!totalLista) return 0;
+  return (saldoPoupanca / totalLista) * 100;
+}
 // Variação entre dois snapshots consecutivos (por competência).
 // pct = null quando o saldo anterior é 0 (divisão indefinida).
 function gcVariacaoSnapshot(atual, anterior) {
@@ -2015,12 +2023,14 @@ function GcInvestmentSnapshotForm({ initialCompetencia, snapshots, onSave, onClo
 
 /* ---------------------------------------------------------------
    TELA: LISTA DE SONHOS (Fase 4) — wishlist + poupança dedicada.
-   Poder de Compra nesta tela usa só wishlist_savings_snapshots.
+   Poder de Compra aqui é literal: % do total da lista (itens não
+   comprados) que a Poupança Sonhos já cobre — não usa
+   GC_PODER_COMPRA_BASE (isso é só Dashboard/Investimentos).
 ----------------------------------------------------------------*/
 function GcSonhos({ items, savingsSnapshots, onToggleComprado, onEdit, onEditSavings }) {
   const { groups, total } = gcWishlistGroups(items);
   const saldoPoupanca = gcSaldoPoupancaSonhos(savingsSnapshots);
-  const poderDeCompra = gcPoderDeCompra(saldoPoupanca);
+  const poderDeCompra = gcPoderDeCompraSonhos(saldoPoupanca, total);
   const fmtPct = (v) => v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + "%";
   const asc = savingsSnapshots.slice().sort((a, b) => a.competencia.localeCompare(b.competencia));
   const historico = asc.slice().reverse();
