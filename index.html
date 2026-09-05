@@ -226,7 +226,6 @@ const GC_EXPENSE_GROUPS_SEED = [
   { id: "saude", nome: "Saúde", ordem: 1 },
   { id: "assinaturas", nome: "Assinaturas", ordem: 2 },
   { id: "pessoal", nome: "Pessoal", ordem: 3 },
-  { id: "trabalho", nome: "Trabalho", ordem: 4 },
 ];
 function gcExpenseGroupLabel(grupo, categories) {
   return ((categories || []).find(g => g.id === grupo) || {}).nome || grupo;
@@ -686,7 +685,7 @@ const GC_DEMO_DATA = {
     { id: "demo-tpl-ceramica", nome: "Cerâmica", grupo: "pessoal", frequencia: "mensal", valorPadrao: 500, valorTipo: "variavel", compartilhado: false, minhaParcelaPct: 100, ativo: true, dataInicio: "2026-01", dataFim: "2026-07" },
     { id: "demo-tpl-psicologa", nome: "Psicóloga", grupo: "saude", frequencia: "mensal", valorPadrao: 520, valorTipo: "fixo", compartilhado: false, minhaParcelaPct: 100, ativo: true, dataInicio: "2026-01", dataFim: null },
     { id: "demo-tpl-plano-saude", nome: "Plano de Saúde", grupo: "saude", frequencia: "mensal", valorPadrao: 620, valorTipo: "fixo", compartilhado: false, minhaParcelaPct: 100, ativo: true, dataInicio: "2026-01", dataFim: null },
-    { id: "demo-tpl-mei", nome: "MEI", grupo: "trabalho", frequencia: "mensal", valorPadrao: 86.05, valorTipo: "fixo", compartilhado: false, minhaParcelaPct: 100, ativo: true, dataInicio: "2026-01", dataFim: null },
+    { id: "demo-tpl-mei", nome: "MEI", grupo: "pessoal", frequencia: "mensal", valorPadrao: 86.05, valorTipo: "fixo", compartilhado: false, minhaParcelaPct: 100, ativo: true, dataInicio: "2026-01", dataFim: null },
     { id: "demo-tpl-apple-one", nome: "Apple One", grupo: "assinaturas", frequencia: "mensal", valorPadrao: 42.90, valorTipo: "fixo", compartilhado: false, minhaParcelaPct: 100, ativo: true, dataInicio: "2026-01", dataFim: null },
     { id: "demo-tpl-icloud", nome: "iCloud+", grupo: "assinaturas", frequencia: "mensal", valorPadrao: 5.90, valorTipo: "fixo", compartilhado: false, minhaParcelaPct: 100, ativo: true, dataInicio: "2026-01", dataFim: null },
     { id: "demo-tpl-youtube", nome: "Youtube Premium", grupo: "assinaturas", frequencia: "mensal", valorPadrao: 53.90, valorTipo: "fixo", compartilhado: false, minhaParcelaPct: 100, ativo: true, dataInicio: "2026-01", dataFim: null },
@@ -801,7 +800,7 @@ function useGcData(session) {
         gcFetchAll(session, "trips"),
         gcFetchAll(session, "trip_expenses"),
       ]);
-      // Instalação nova (sem nenhuma categoria ainda): semeia as 5 categorias
+      // Instalação nova (sem nenhuma categoria ainda): semeia as categorias
       // padrão uma única vez, pra tela de Despesas não nascer vazia.
       let categoriasFinais = categories;
       if (!categoriasFinais.length) {
@@ -809,11 +808,49 @@ function useGcData(session) {
           await gcUpsertMany(session, "expense_categories", GC_EXPENSE_GROUPS_SEED);
           categoriasFinais = GC_EXPENSE_GROUPS_SEED;
         } catch (seedErr) { console.error(seedErr); }
+      } else {
+        // Auto-cura pra quem instalou antes de Saúde/Assinaturas virarem
+        // categorias próprias: cria só as que ainda faltam, sem mexer nas
+        // que o usuário já tem/reordenou. Sem isso, recorrência com esse
+        // grupo cai em "Outros" pra sempre.
+        const idsExistentes = new Set(categoriasFinais.map(c => c.id));
+        const faltando = GC_EXPENSE_GROUPS_SEED.filter(g => !idsExistentes.has(g.id));
+        if (faltando.length) {
+          try {
+            await gcUpsertMany(session, "expense_categories", faltando);
+            categoriasFinais = [...categoriasFinais, ...faltando];
+          } catch (healErr) { console.error(healErr); }
+        }
       }
-      let instances = instRaw;
+      // Dissolve a categoria "trabalho" (ex.: MEI) — vira Pessoal e some
+      // "Outros"/o chip de grupo que a recorrência ganhava por não ter mais
+      // categoria própria. Autocura de quem instalou antes dessa mudança.
+      let templatesFinais = templates;
+      const templatesTrabalho = templates.filter(t => t.grupo === "trabalho");
+      if (templatesTrabalho.length) {
+        try {
+          await gcUpsertMany(session, "expense_templates", templatesTrabalho.map(t => ({ ...t, grupo: "pessoal" })));
+          templatesFinais = templates.map(t => t.grupo === "trabalho" ? { ...t, grupo: "pessoal" } : t);
+        } catch (migErr) { console.error(migErr); }
+      }
+      let instancesTrabalhoMigradas = instRaw;
+      const instTrabalho = instRaw.filter(i => i.grupo === "trabalho");
+      if (instTrabalho.length) {
+        try {
+          await gcUpsertMany(session, "expense_instances", instTrabalho.map(i => ({ ...i, grupo: "pessoal" })));
+          instancesTrabalhoMigradas = instRaw.map(i => i.grupo === "trabalho" ? { ...i, grupo: "pessoal" } : i);
+        } catch (migErr) { console.error(migErr); }
+      }
+      if (categoriasFinais.some(c => c.id === "trabalho")) {
+        try {
+          await gcDeleteOne(session, "expense_categories", "trabalho");
+          categoriasFinais = categoriasFinais.filter(c => c.id !== "trabalho");
+        } catch (delErr) { console.error(delErr); }
+      }
+      let instances = instancesTrabalhoMigradas;
       // Geração lazy: cria só as instâncias que faltam até o mês atual e já
       // grava de volta (batch), pra não repetir o cálculo em todo load.
-      const novas = gcGenerateMissingInstances(templates, instances, competenciaAtual());
+      const novas = gcGenerateMissingInstances(templatesFinais, instances, competenciaAtual());
       if (novas.length) {
         try {
           await gcUpsertMany(session, "expense_instances", novas);
@@ -830,7 +867,7 @@ function useGcData(session) {
       setIncomeSources(sources);
       setIncomeEntries(entries);
       setIncomeProjections(projections);
-      setExpenseTemplates(templates);
+      setExpenseTemplates(templatesFinais);
       setExpenseInstances(reconciliado.expense_instances);
       setInvestmentSnapshots(snapshots);
       setWishlistItems(reconciliado.wishlist_items);
@@ -1386,7 +1423,7 @@ function GcIncomeProjectionForm({ ano, initial, onSave, onClose }) {
 
 /* ---------------------------------------------------------------
    TELA: DESPESAS (Fase 2) — lista unificada agrupada por área da vida
-   (Casa/Saúde/Assinaturas/Pessoal/Trabalho), com checkbox de "pago"
+   (Casa/Saúde/Assinaturas/Pessoal), com checkbox de "pago"
    inline e input de valor nas variáveis ainda estimadas (confirma ao sair).
 ----------------------------------------------------------------*/
 function GcDespesas({ instances, categories, competencia, onTogglePago, onSaveValor, onEditInstance, onManageCategories }) {
@@ -1839,13 +1876,17 @@ function GcInvestimentos({ snapshots, onEdit }) {
     value: s.saldo || 0,
     id: s.competencia,
   }));
+  // Mostra, além do último saldo, o saldo de Janeiro do ano corrente (pra
+  // comparar início x situação atual do ano) — pedido do Gui.
+  const anoAtualJan = competenciaAtual().slice(0, 4) + "-01";
+  const janIndex = asc.findIndex(s => s.competencia === anoAtualJan);
 
   return (
     <div className="gc-screen">
       <div className="gc-statcards gc-statcards-2">
         <div className="gc-statcard">
           <span className="gc-statcard-num gc-money">{gcFmtMoney(saldoEmCaixa)}</span>
-          <span className="gc-statcard-cap">Saldo em Caixa</span>
+          <span className="gc-statcard-cap">Total Investido</span>
         </div>
         <div className="gc-statcard">
           <span className={"gc-statcard-num" + (ultimoPar ? " " + gcDeltaTone(ultimoPar.delta) : "")}>
@@ -1858,7 +1899,7 @@ function GcInvestimentos({ snapshots, onEdit }) {
       {chartItems.length >= 2 && (
         <div className="gc-dashboard-section">
           <h3 className="gc-section-title">Evolução</h3>
-          <GcAreaChart items={chartItems} showValues />
+          <GcAreaChart items={chartItems} showValues janIndex={janIndex} />
         </div>
       )}
 
@@ -2179,7 +2220,7 @@ function GcColumnsGrouped({ items }) {
   );
 }
 
-function GcAreaChart({ items, showValues, onClick }) {
+function GcAreaChart({ items, showValues, janIndex, onClick }) {
   const max = Math.max(...items.map(i => i.value), 1);
   const w = 300, h = 120, padX = 6, padTop = showValues ? 16 : 6, padBottom = 6;
   const stepX = items.length > 1 ? (w - padX * 2) / (items.length - 1) : 0;
@@ -2208,6 +2249,12 @@ function GcAreaChart({ items, showValues, onClick }) {
         </svg>
         {showValues && lastIdx >= 0 && (
           <div className="gc-area-values" aria-hidden="true">
+            {janIndex != null && janIndex >= 0 && janIndex !== lastIdx && (
+              <span
+                className="gc-area-values-jan"
+                style={{ left: (pontos[janIndex][0] / w) * 100 + "%", top: (pontos[janIndex][1] / h) * 100 + "%" }}
+              >{gcFmtMoneyCompact(items[janIndex].value)}</span>
+            )}
             <span
               style={{ left: (pontos[lastIdx][0] / w) * 100 + "%", top: (pontos[lastIdx][1] / h) * 100 + "%" }}
             >{gcFmtMoneyCompact(items[lastIdx].value)}</span>
@@ -2254,7 +2301,7 @@ function GcDashboard({ incomeEntries, expenseInstances, investmentSnapshots, ano
         </div>
         <div className="gc-statcard">
           <span className="gc-statcard-num gc-money">{gcFmtMoney(saldoEmCaixa)}</span>
-          <span className="gc-statcard-cap">Saldo em Caixa</span>
+          <span className="gc-statcard-cap">Total Investido</span>
         </div>
         <div className="gc-statcard">
           <span className="gc-statcard-num">{fmtPct(poderDeCompra)}</span>
@@ -2321,6 +2368,7 @@ function GcDashboard({ incomeEntries, expenseInstances, investmentSnapshots, ano
           <GcAreaChart
             items={investChartItems}
             showValues
+            janIndex={0}
             onClick={onOpenInvestimentos}
           />
         </div>
@@ -3653,6 +3701,7 @@ button.gc-list-row-btn:hover { background: var(--gc-surface-2); }
   white-space: nowrap;
   line-height: 1;
 }
+.gc-area-values-jan { color: var(--gc-ink-soft); }
 .gc-area-labels { display: flex; justify-content: space-between; }
 .gc-area-label { font-family: 'Space Grotesk', sans-serif; font-size: 10px; color: var(--gc-ink-soft); text-align: center; line-height: 1; }
 
