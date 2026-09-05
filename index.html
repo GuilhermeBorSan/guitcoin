@@ -258,6 +258,13 @@ function gcMonthInstancesTotal(instances, competencia) {
 function gcCustoMes(instances, competencia) {
   return gcInstancesForCompetencia(instances, competencia).reduce((s, i) => s + gcCustoInstance(i), 0);
 }
+// Total de despesas a pagar (Dashboard): soma o valor lançado (não a
+// parcela pós-divisão) de toda instância ainda não marcada como paga, sem
+// filtrar por competência/ano — é um "quanto falta pagar" agora, não uma
+// estatística anual, mesmo espírito não-anual do Saldo em Caixa.
+function gcTotalDespesasAPagar(instances) {
+  return instances.filter(i => !i.pago).reduce((s, i) => s + (i.valor || 0), 0);
+}
 function gcGroupInstances(instances, competencia, categories) {
   const doMes = gcInstancesForCompetencia(instances, competencia);
   const cats = (categories || []).slice().sort((a, b) => (a.ordem || 0) - (b.ordem || 0));
@@ -2362,7 +2369,7 @@ function GcDashboard({ incomeEntries, expenseInstances, investmentSnapshots, ano
   const taxaDePoupanca = gcTaxaDePoupanca(faturamentoAnual, custoDeVidaAnual);
   const mediaMensalDeGastos = gcMediaMensalDeGastos(custoDeVidaAnual);
   const saldoEmCaixa = gcSaldoEmCaixa(investmentSnapshots);
-  const poderDeCompra = gcPoderDeCompra(saldoEmCaixa);
+  const despesasAPagar = gcTotalDespesasAPagar(expenseInstances);
   const fmtPct = (v) => v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + "%";
 
   return (
@@ -2377,8 +2384,8 @@ function GcDashboard({ incomeEntries, expenseInstances, investmentSnapshots, ano
           <span className="gc-statcard-cap">Total Investido</span>
         </div>
         <div className="gc-statcard">
-          <span className="gc-statcard-num">{fmtPct(poderDeCompra)}</span>
-          <span className="gc-statcard-cap">Poder de Compra</span>
+          <span className="gc-statcard-num gc-money gc-num-red">{gcFmtMoney(despesasAPagar)}</span>
+          <span className="gc-statcard-cap">Despesas a Pagar</span>
         </div>
         <div className="gc-statcard">
           <span className="gc-statcard-num gc-money gc-num-red">{gcFmtMoney(custoDeVidaAnual)}</span>
