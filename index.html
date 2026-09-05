@@ -2034,6 +2034,9 @@ function GcSonhos({ items, savingsSnapshots, onToggleComprado, onEdit, onEditSav
   const fmtPct = (v) => v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + "%";
   const asc = savingsSnapshots.slice().sort((a, b) => a.competencia.localeCompare(b.competencia));
   const historico = asc.slice().reverse();
+  // Sub-abas: Itens (padrão) e Histórico da poupança — mesma ideia de
+  // sub-navegação dentro da tela usada nos apps irmãos (TabBar, prefixo lb-).
+  const [subTab, setSubTab] = useState("itens");
   return (
     <div className="gc-screen">
       <div className="gc-statcards gc-statcards-2">
@@ -2047,9 +2050,17 @@ function GcSonhos({ items, savingsSnapshots, onToggleComprado, onEdit, onEditSav
         </div>
       </div>
 
-      {historico.length > 0 && (
-        <div className="gc-dashboard-section">
-          <h3 className="gc-section-title">Histórico da poupança</h3>
+      <TabBar
+        options={[{ value: "itens", label: "Itens" }, { value: "historico", label: "Histórico da poupança" }]}
+        value={subTab}
+        onChange={setSubTab}
+        ariaLabel="Sub-abas da Lista de Sonhos"
+      />
+
+      {subTab === "historico" ? (
+        historico.length === 0 ? (
+          <EmptyState icon={<TrendingUp size={40} />} title="Nenhum registro ainda" message="Toque no + pra registrar o primeiro saldo da Poupança Sonhos." />
+        ) : (
           <div className="gc-list">
             {historico.map((s, i) => {
               const anterior = historico[i + 1] || null;
@@ -2069,10 +2080,8 @@ function GcSonhos({ items, savingsSnapshots, onToggleComprado, onEdit, onEditSav
               );
             })}
           </div>
-        </div>
-      )}
-
-      {groups.length === 0 ? (
+        )
+      ) : groups.length === 0 ? (
         <EmptyState icon={<Gift size={40} />} title="Nenhum item na lista" message="Toque no + pra adicionar algo que você quer comprar." />
       ) : (
         <>
