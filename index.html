@@ -1474,8 +1474,18 @@ function GcDespesasScreen({
   instances, templates, categories, competencia,
   onTogglePago, onSaveValor, onEditInstance, onManageCategories, onEditTemplate,
 }) {
+  const ano = parseInt(String(competencia || "").slice(0, 4), 10) || new Date().getFullYear();
+  const custoPorMes = gcCustoPorMes(instances, ano);
+  const mesAtivo = parseInt(String(competencia || "").slice(5), 10) - 1;
   return (
     <div className="gc-screen">
+      <div className="gc-despesas-chart">
+        <h3 className="gc-section-title">Meu custo · {ano}</h3>
+        <GcColumns
+          items={custoPorMes.map((m, i) => ({ label: MONTH_LABELS[i], value: m.total }))}
+          activeIndex={mesAtivo >= 0 && mesAtivo < 12 ? mesAtivo : undefined}
+        />
+      </div>
       <TabBar
         options={[{ value: "mes", label: "Deste mês" }, { value: "recorrencias", label: "Recorrências" }]}
         value={despesasSub}
@@ -1941,9 +1951,7 @@ function GcInvestimentos({ snapshots, onEdit }) {
   const historico = asc.slice().reverse();
   const ultimoPar = asc.length >= 2 ? gcVariacaoSnapshot(asc[asc.length - 1], asc[asc.length - 2]) : null;
   const chartItems = asc.map(s => ({
-    // Eixo X do gráfico de Evolução: número do mês (1–12), não o nome
-    // abreviado (Jan/Fev/...) usado no resto do app — pedido do Gui.
-    label: String(Number(s.competencia.slice(5, 7))),
+    label: MONTH_LABELS[Number(s.competencia.slice(5, 7)) - 1],
     value: s.saldo || 0,
     id: s.competencia,
   }));
@@ -2289,6 +2297,46 @@ function GcWishlistItemForm({ initial, onSave, onDelete, onClose }) {
    derivado das outras telas (nenhum dado próprio). Gráficos em SVG/CSS
    puro, sem biblioteca (mesmo espírito do GgColumns do Guitchelin).
 ----------------------------------------------------------------*/
+// Barras de uma série (ex.: Meu custo em Despesas). activeIndex destaca
+// o mês da competência atual (0–11).
+function GcColumns({ items, activeIndex }) {
+  const max = Math.max(...items.map(i => i.value), 1);
+  const axisTop = Math.max(Math.ceil(max / 1000) * 1000, 1000);
+  const majorTicks = [];
+  for (let v = 0; v <= axisTop; v += 1000) majorTicks.push(v);
+  return (
+    <div className="gc-cols-wrap">
+      <div className="gc-cols-axis">
+        <div className="gc-cols-axis-plot">
+          {majorTicks.map(v => (
+            <span key={v} className="gc-cols-axis-label" style={{ bottom: (v / axisTop) * 100 + "%" }}>
+              {gcFmtMoneyCompact(v)}
+            </span>
+          ))}
+        </div>
+      </div>
+      <div className="gc-cols">
+        <div className="gc-cols-grid">
+          {majorTicks.map(v => (
+            <div key={v} className="gc-cols-gridline" style={{ bottom: (v / axisTop) * 100 + "%" }} />
+          ))}
+        </div>
+        {items.map((it, i) => (
+          <div className={"gc-col" + (i === activeIndex ? " gc-col-active" : "")} key={it.label}>
+            <div className="gc-col-track">
+              <div
+                className="gc-col-fill gc-col-fill-expense"
+                style={{ height: it.value ? Math.max((it.value / axisTop) * 100, 4) + "%" : "0%" }}
+              />
+            </div>
+            <span className="gc-col-label">{it.label}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function GcColumnsGrouped({ items }) {
   const max = Math.max(...items.flatMap(i => [i.a, i.b]), 1);
   // Eixo Y de 1000 em 1000 (arredondado pra cima até cobrir o maior valor do
@@ -3017,11 +3065,11 @@ function GcTripExpenseForm({ initial, tripId, dia, numDias, existingCategorias, 
 const GC_NAV_ITEMS = [
   { value: "dashboard", label: "Dashboard", icon: (s) => <BarChart3 size={s} />, group: null },
   { value: "despesas", label: "Despesas", icon: (s) => <FileText size={s} />, group: null },
-  { value: "receitas", label: "Receitas", icon: (s) => <TrendingUp size={s} />, group: "Financeiro" },
-  { value: "investimentos", label: "Investimentos", icon: (s) => <TrendingUp size={s} />, group: "Financeiro" },
-  { value: "viagens", label: "Viagens", icon: (s) => <Plane size={s} />, group: "Financeiro" },
-  { value: "sonhos", label: "Lista de Sonhos", icon: (s) => <Gift size={s} />, group: "Listas" },
-  { value: "conta", label: "Conta", icon: (s) => <Utensils size={s} />, group: "Ferramentas" },
+  { value: "receitas", label: "Receitas", icon: (s) => <TrendingUp size={s} />, group: null },
+  { value: "investimentos", label: "Investimentos", icon: (s) => <TrendingUp size={s} />, group: null },
+  { value: "viagens", label: "Viagens", icon: (s) => <Plane size={s} />, group: "Mais" },
+  { value: "sonhos", label: "Lista de Sonhos", icon: (s) => <Gift size={s} />, group: "Mais" },
+  { value: "conta", label: "Conta", icon: (s) => <Utensils size={s} />, group: "Mais" },
 ];
 // Ano inicial de Receitas: no modo demo, o ano do último lançamento; senão, ano atual.
 function gcInitialReceitasAno() {
@@ -3160,7 +3208,7 @@ function App({ session }) {
                 <div className="gc-hub-backdrop" onClick={() => setHubOpen(false)} />
                 <div className="gc-hub-popover" role="dialog" aria-label="Navegação">
                   <div className="gc-hub-grid">
-                    {GC_NAV_ITEMS.map(item => (
+                    {GC_NAV_ITEMS.filter(i => !i.group).map(item => (
                       <button
                         key={item.value}
                         type="button"
@@ -3171,6 +3219,22 @@ function App({ session }) {
                         <span>{item.label === "Lista de Sonhos" ? "Sonhos" : item.label}</span>
                       </button>
                     ))}
+                  </div>
+                  <div className="gc-hub-section">
+                    <div className="gc-hub-section-label">Mais</div>
+                    <div className="gc-hub-grid">
+                      {GC_NAV_ITEMS.filter(i => i.group === "Mais").map(item => (
+                        <button
+                          key={item.value}
+                          type="button"
+                          className={"gc-hub-item" + (subTab === item.value ? " active" : "")}
+                          onClick={() => openTab(item.value)}
+                        >
+                          <span className="gc-hub-item-icon">{item.icon(22)}</span>
+                          <span>{item.label === "Lista de Sonhos" ? "Sonhos" : item.label}</span>
+                        </button>
+                      ))}
+                    </div>
                   </div>
                   <div className="gc-hub-footer">
                     <button type="button" className="gc-hub-action danger" onClick={() => { if (!GC_IS_LOCAL && gcAuth) gcAuth.signOut(); }} aria-label="Sair">
@@ -3848,6 +3912,10 @@ button.gc-list-row-btn:hover { background: var(--gc-surface-2); }
 .gc-col-track-grouped { gap: 2px; }
 .gc-col-fill-a { max-width: 10px; background: var(--gc-accent); }
 .gc-col-fill-b { max-width: 10px; background: var(--gc-red); }
+.gc-col-fill-expense { background: var(--gc-red); }
+.gc-col-active .gc-col-fill-expense { background: color-mix(in srgb, var(--gc-red) 70%, var(--gc-ink)); }
+.gc-col-active .gc-col-label { color: var(--gc-ink); font-weight: 600; }
+.gc-despesas-chart { display: flex; flex-direction: column; gap: var(--sp-3); margin-bottom: var(--sp-2); }
 
 .gc-legend { display: flex; justify-content: center; gap: var(--sp-4); }
 .gc-legend-item { display: flex; align-items: center; gap: 6px; font-family: 'Space Grotesk', sans-serif; font-size: 12px; color: var(--gc-ink-soft); }
@@ -3969,6 +4037,14 @@ button.gc-list-row-btn:hover { background: var(--gc-surface-2); }
 }
 .gc-hub-grid {
   display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px 6px;
+}
+.gc-hub-section {
+  margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--gc-line);
+}
+.gc-hub-section-label {
+  font-family: 'Space Grotesk', sans-serif; font-size: 10.5px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: .5px; color: var(--gc-ink-soft);
+  margin-bottom: 6px; padding-left: 2px;
 }
 .gc-hub-item {
   display: flex; flex-direction: column; align-items: center; gap: 6px;
