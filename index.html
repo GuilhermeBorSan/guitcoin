@@ -1465,10 +1465,36 @@ function GcIncomeProjectionForm({ ano, initial, onSave, onClose }) {
 }
 
 /* ---------------------------------------------------------------
-   TELA: DESPESAS (Fase 2) — lista unificada agrupada por área da vida
-   (Casa/Saúde/Assinaturas/Pessoal), com checkbox de "pago"
-   inline e input de valor nas variáveis ainda estimadas (confirma ao sair).
+   TELA: DESPESAS — sub-abas "Deste mês" (instâncias) e "Recorrências"
+   (templates). TabBar no topo; cada aba traz seus próprios statcards
+   (números de mundos diferentes — não compartilha stats como Sonhos).
 ----------------------------------------------------------------*/
+function GcDespesasScreen({
+  despesasSub, onDespesasSubChange,
+  instances, templates, categories, competencia,
+  onTogglePago, onSaveValor, onEditInstance, onManageCategories, onEditTemplate,
+}) {
+  return (
+    <div className="gc-screen">
+      <TabBar
+        options={[{ value: "mes", label: "Deste mês" }, { value: "recorrencias", label: "Recorrências" }]}
+        value={despesasSub}
+        onChange={onDespesasSubChange}
+        ariaLabel="Sub-abas de Despesas"
+      />
+      {despesasSub === "recorrencias" ? (
+        <GcRecorrencias templates={templates} categories={categories} onEdit={onEditTemplate} />
+      ) : (
+        <GcDespesas
+          instances={instances} categories={categories} competencia={competencia}
+          onTogglePago={onTogglePago} onSaveValor={onSaveValor}
+          onEditInstance={onEditInstance} onManageCategories={onManageCategories}
+        />
+      )}
+    </div>
+  );
+}
+
 function GcDespesas({ instances, categories, competencia, onTogglePago, onSaveValor, onEditInstance, onManageCategories }) {
   const grupos = gcGroupInstances(instances, competencia, categories);
   const totalMes = gcMonthInstancesTotal(instances, competencia);
@@ -1477,7 +1503,7 @@ function GcDespesas({ instances, categories, competencia, onTogglePago, onSaveVa
   const pagasCount = instancesMes.filter(i => i.pago).length;
 
   return (
-    <div className="gc-screen">
+    <>
       <div className="gc-statcards gc-statcards-3">
         <div className="gc-statcard">
           <span className="gc-statcard-num gc-money">{gcFmtMoney(totalMes)}</span>
@@ -1559,7 +1585,7 @@ function GcDespesas({ instances, categories, competencia, onTogglePago, onSaveVa
           </div>
         ))
       )}
-    </div>
+    </>
   );
 }
 
@@ -1645,8 +1671,8 @@ function GcExpenseInstanceForm({ initial, categories, competencia, onSave, onDel
 }
 
 /* ---------------------------------------------------------------
-   TELA: RECORRÊNCIAS (Fase 2) — CRUD dos templates que geram as instâncias
-   de Despesas automaticamente (ver gcGenerateMissingInstances).
+   CONTEÚDO: RECORRÊNCIAS — templates que geram instâncias em Despesas
+   (ver gcGenerateMissingInstances). Renderizado como sub-aba de Despesas.
 ----------------------------------------------------------------*/
 function GcRecorrencias({ templates, categories, onEdit }) {
   const grupos = gcGroupTemplates(templates, categories);
@@ -1656,7 +1682,7 @@ function GcRecorrencias({ templates, categories, onEdit }) {
   const totalGeral = grupos.reduce((s, g) => s + g.total, 0) + orfaosTotal;
   const custoGeral = grupos.reduce((s, g) => s + g.custo, 0) + orfaosCusto;
   return (
-    <div className="gc-screen">
+    <>
       {templates.length === 0 ? (
         <EmptyState icon={<Repeat size={40} />} title="Nenhuma recorrência" message="Toque no + pra cadastrar uma conta fixa, assinatura ou cobrança anual." />
       ) : (
@@ -1719,7 +1745,7 @@ function GcRecorrencias({ templates, categories, onEdit }) {
           )}
         </>
       )}
-    </div>
+    </>
   );
 }
 
@@ -2992,7 +3018,6 @@ const GC_NAV_ITEMS = [
   { value: "dashboard", label: "Dashboard", icon: (s) => <BarChart3 size={s} />, group: null },
   { value: "despesas", label: "Despesas", icon: (s) => <FileText size={s} />, group: null },
   { value: "receitas", label: "Receitas", icon: (s) => <TrendingUp size={s} />, group: "Financeiro" },
-  { value: "recorrencias", label: "Recorrências", icon: (s) => <Repeat size={s} />, group: "Financeiro" },
   { value: "investimentos", label: "Investimentos", icon: (s) => <TrendingUp size={s} />, group: "Financeiro" },
   { value: "viagens", label: "Viagens", icon: (s) => <Plane size={s} />, group: "Financeiro" },
   { value: "sonhos", label: "Lista de Sonhos", icon: (s) => <Gift size={s} />, group: "Listas" },
@@ -3031,6 +3056,7 @@ function App({ session }) {
   const [hubOpen, setHubOpen] = useState(false);
   const [receitasAno, setReceitasAno] = useState(gcInitialReceitasAno);
   const [despesasComp, setDespesasComp] = useState(competenciaAtual);
+  const [despesasSub, setDespesasSub] = useState("mes");
   const [dashboardAno, setDashboardAno] = useState(() => competenciaAtual().slice(0, 4));
   const [sourceForm, setSourceForm] = useState(null);
   const [instanceForm, setInstanceForm] = useState(null);
@@ -3090,13 +3116,26 @@ function App({ session }) {
   }, [subTab]);
 
   useEffect(() => {
+    setTopbarFilterOpen(false);
+  }, [despesasSub]);
+
+  useEffect(() => {
     if (!topbarFilterOpen) return;
     const onKey = (e) => { if (e.key === "Escape") setTopbarFilterOpen(false); };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [topbarFilterOpen]);
 
-  const openTab = (tab) => { setHubOpen(false); setSubTab(tab); };
+  const openTab = (tab) => {
+    setHubOpen(false);
+    // Estado velho / deep-link: "recorrencias" virou sub-aba de Despesas.
+    if (tab === "recorrencias") {
+      setSubTab("despesas");
+      setDespesasSub("recorrencias");
+      return;
+    }
+    setSubTab(tab);
+  };
   const current = GC_NAV_ITEMS.find(i => i.value === subTab);
 
   return (
@@ -3143,7 +3182,7 @@ function App({ session }) {
             )}
           </div>
           <span className="gc-topbar-spacer" />
-          {(subTab === "dashboard" || subTab === "receitas" || subTab === "despesas") ? (
+          {(subTab === "dashboard" || subTab === "receitas" || (subTab === "despesas" && despesasSub === "mes")) ? (
             <div className="gc-topbar-filter">
               <button type="button" className={"lb-icon-btn" + (topbarFilterOpen ? " active" : "")}
                 onClick={() => { setHubOpen(false); setTopbarFilterOpen(o => !o); }}
@@ -3210,15 +3249,16 @@ function App({ session }) {
               onSaveEntryValor={(sourceId, competencia, existingId, valor) => saveIncomeEntry({ id: existingId || uid(), sourceId, competencia, valor })}
             />
           ) : subTab === "despesas" ? (
-            <GcDespesas
-              instances={expenseInstances} categories={expenseCategories} competencia={despesasComp}
+            <GcDespesasScreen
+              despesasSub={despesasSub} onDespesasSubChange={setDespesasSub}
+              instances={expenseInstances} templates={expenseTemplates}
+              categories={expenseCategories} competencia={despesasComp}
               onTogglePago={toggleExpenseInstancePago}
               onSaveValor={(inst, valor) => saveExpenseInstance({ ...inst, valor, valorConfirmado: true })}
               onEditInstance={(inst) => setInstanceForm({ initial: inst })}
               onManageCategories={() => setCategoriesModal(true)}
+              onEditTemplate={(t) => setTemplateForm({ initial: t })}
             />
-          ) : subTab === "recorrencias" ? (
-            <GcRecorrencias templates={expenseTemplates} categories={expenseCategories} onEdit={(t) => setTemplateForm({ initial: t })} />
           ) : subTab === "investimentos" ? (
             <GcInvestimentos snapshots={investmentSnapshots} onEdit={(comp) => setSnapshotForm({ initialCompetencia: comp })} />
           ) : subTab === "sonhos" ? (
@@ -3267,8 +3307,10 @@ function App({ session }) {
           onClick={() => {
             if (subTab === "dashboard") setDashboardFabMenu(true);
             else if (subTab === "receitas") setSourceForm({ initial: null, competencia: gcReceitasDefaultCompetencia(receitasAno) });
-            else if (subTab === "despesas") setDespesasFabMenu(true);
-            else if (subTab === "recorrencias") setTemplateForm({ initial: null });
+            else if (subTab === "despesas") {
+              if (despesasSub === "recorrencias") setTemplateForm({ initial: null });
+              else setDespesasFabMenu(true);
+            }
             else if (subTab === "investimentos") setSnapshotForm({ initialCompetencia: competenciaAtual() });
             else if (subTab === "sonhos") setSonhosFabMenu(true);
             else if (subTab === "conta") setContaItemForm({ initial: null });
@@ -3277,7 +3319,7 @@ function App({ session }) {
               else setTripForm({ initial: null });
             }
           }}
-          aria-label={subTab === "dashboard" ? "Adicionar" : subTab === "receitas" ? "Nova fonte de receita" : subTab === "despesas" ? "Nova despesa" : subTab === "recorrencias" ? "Nova recorrência" : subTab === "investimentos" ? "Registrar saldo" : subTab === "sonhos" ? "Adicionar" : subTab === "conta" ? "Novo item da conta" : subTab === "viagens" ? (tripAberta ? "Novo gasto" : "Nova viagem") : "Adicionar"}>
+          aria-label={subTab === "dashboard" ? "Adicionar" : subTab === "receitas" ? "Nova fonte de receita" : subTab === "despesas" ? (despesasSub === "recorrencias" ? "Nova recorrência" : "Nova despesa") : subTab === "investimentos" ? "Registrar saldo" : subTab === "sonhos" ? "Adicionar" : subTab === "conta" ? "Novo item da conta" : subTab === "viagens" ? (tripAberta ? "Novo gasto" : "Nova viagem") : "Adicionar"}>
           <Plus size={26} />
         </button>
 

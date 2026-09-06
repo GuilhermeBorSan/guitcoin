@@ -150,16 +150,16 @@ reajuste de preço, ex. Disney+ subindo mês a mês).
   Dashboard) ficam cortadas sem aviso dentro do preview local de iPhone
   (em produção real o `body` ainda rola, mas o efeito visual de
   topbar/nav fixos se perde).
-- Navegação: nav inferior (`.gc-bottomnav`) = Dashboard · + (FAB contextual)
-  · Despesas (Despesas é o uso diário — marcar contas como pagas — por isso
-  fica fixa; Dashboard é a tela de entrada). Gaveta lateral (`.gc-sidebar`)
-  com **Financeiro** (Receitas, Recorrências, Investimentos) e **Listas**
-  (Lista de Sonhos) + Sair. Rota por estado local: `subTab` (sem
-  react-router).
-- Telas: Dashboard (só leitura), Receitas (lista + modal), Despesas (lista
-  agrupada por `grupo` com checkbox "pago" inline), Recorrências (CRUD de
-  templates), Investimentos (lista + modal + gráfico), Lista de Sonhos
-  (agrupada por categoria + subtotal/total).
+- Navegação: hub popover no topbar (`.gc-hub-popover`, abre pelo brand) com
+  Dashboard, Despesas, Receitas, Investimentos, Viagens, Lista de Sonhos,
+  Conta + Sair. Rota por estado local: `subTab` (sem react-router). FAB
+  contextual flutuante. Recorrências **não** é item do hub — vive como
+  sub-aba dentro de Despesas (`despesasSub`: `"mes"` | `"recorrencias"`).
+- Telas: Dashboard (só leitura), Receitas (lista + modal), Despesas
+  (`GcDespesasScreen` com TabBar **Deste mês** | **Recorrências** — mês =
+  lista agrupada com checkbox "pago"; Recorrências = CRUD de templates),
+  Investimentos (lista + modal + gráfico), Lista de Sonhos (agrupada por
+  categoria + subtotal/total; também tem TabBar interno Itens/Histórico).
 - Gráficos: sem biblioteca, SVG/CSS puro (barras 2 séries receita×gastos,
   linha/área pra evolução de investimentos) — mesmo estilo de `GgColumns`
   (Guitchelin) e `MonthLineChart`/`PieChart` (Letterborgs).
@@ -190,9 +190,9 @@ reajuste de preço, ex. Disney+ subindo mês a mês).
 - ~~Fase 1 — Receitas (tabelas + tela)~~ ✅ feito: `GcReceitas` (cards de
   projeção + seletor de mês + grid por fonte), `GcIncomeSourceForm`,
   `GcIncomeProjectionForm`.
-- ~~Fase 2 — Despesas + Recorrências~~ ✅ feito: `GcDespesas` (lista
-  agrupada por categoria + checkbox de pago inline + statcards "Total
-  lançado"/"Meu custo"), `GcRecorrencias` (CRUD de templates),
+- ~~Fase 2 — Despesas + Recorrências~~ ✅ feito: `GcDespesasScreen` (TabBar
+  Deste mês / Recorrências), `GcDespesas` (lista do mês + checkbox de pago
+  + statcards), `GcRecorrencias` (CRUD de templates),
   `GcExpenseInstanceForm`, `GcExpenseTemplateForm`, motor
   `gcGenerateMissingInstances` (geração lazy até o mês atual, mensal ou
   anual, respeitando pausa/data-fim).
@@ -268,22 +268,21 @@ Firebase ser criado).
   `renda_fixa_mensal_esperada`, e toque no FAB pra cadastrar uma fonte nova
   (Fixa ou Extra) — deve aparecer na lista imediatamente.
 
-- **Despesas + Recorrências (Fase 2)**: abra Recorrências pela gaveta —
-  deve listar as 17 recorrências de demo (Casa/Pessoal/PIX/Cartão fixo),
-  mostrando "Anual · <mês>" pras assinaturas anuais (PSN/Nintendo Online em
-  Jan, Google One em Jul, TickTick em Out), "pausada" na Cerâmica (parou em
-  Jul/2026) e "0% minha parte" nas 4 contas de Casa (CAESB/NEOENERGIA/
-  SuperGás/Internet, divididas com o Bruno). Abra Despesas — o mês atual já
-  deve ter as instâncias geradas sozinhas pra cada recorrência ativa
-  (confirme que a Cerâmica NÃO aparece mais e que nenhuma anual fora do seu
-  mês aparece); confirme que "Total lançado" soma tudo mas "Meu custo (após
-  divisão)" é menor exatamente pelo valor das 4 contas do Bruno. Marque uma
-  despesa como paga (checkbox inline, sem abrir modal) e confirme que
-  persiste ao trocar de mês e voltar. Toque numa linha pra abrir o formulário
-  de edição (confirme os campos de divisão pré-preenchidos) e no FAB em
-  Despesas (deve abrir um menu com "Despesa avulsa" e "Nova recorrência") e
-  em Recorrências (deve abrir direto o formulário de nova recorrência, com o
-  campo "Mês de cobrança" aparecendo só quando a frequência é Anual).
+- **Despesas + Recorrências (Fase 2)**: abra Despesas pelo hub — TabBar
+  **Deste mês** | **Recorrências** (padrão: Deste mês). Na aba do mês, o
+  filtro de competência aparece no topbar; o mês atual já deve ter as
+  instâncias geradas sozinhas pra cada recorrência ativa (confirme que a
+  Cerâmica NÃO aparece mais e que nenhuma anual fora do seu mês aparece);
+  confirme que "Total lançado" soma tudo mas "Meu custo (após divisão)" é
+  menor exatamente pelo valor das 4 contas do Bruno. Marque uma despesa
+  como paga (checkbox inline) e confirme que persiste ao trocar de mês e
+  voltar. Toque numa linha pra editar; FAB na aba do mês abre menu
+  "Despesa avulsa" / "Nova recorrência". Troque pra **Recorrências** —
+  filtro de mês some; deve listar as 17 recorrências de demo (com
+  "Anual · <mês>", "pausada" na Cerâmica, "0% minha parte" nas contas de
+  Casa); FAB abre direto o formulário de nova recorrência (campo "Mês de
+  cobrança" só quando frequência é Anual). Hub **não** lista Recorrências
+  como item próprio.
 
 - **Investimentos (Fase 3)**: abra Investimentos pela gaveta — em modo demo
   deve mostrar Saldo em Caixa R$51.773,18 e Poder de Compra 5.177,32%
