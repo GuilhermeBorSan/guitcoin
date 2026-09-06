@@ -3200,13 +3200,23 @@ function App({ session }) {
               aria-haspopup="dialog"
             >
               <GcCoin size={22} />
-              <strong>Guitcoin</strong>
+              <strong>
+                {subTab === "dashboard"
+                  ? "Guitcoin"
+                  : (current?.label === "Lista de Sonhos" ? "Sonhos" : (current?.label || "Guitcoin"))}
+              </strong>
               <ChevronDown size={16} className="gc-brand-chevron" />
             </button>
             {hubOpen && (
               <>
                 <div className="gc-hub-backdrop" onClick={() => setHubOpen(false)} />
                 <div className="gc-hub-popover" role="dialog" aria-label="Navegação">
+                  {subTab !== "dashboard" && (
+                    <div className="gc-hub-brand">
+                      <GcCoin size={18} />
+                      <strong>Guitcoin</strong>
+                    </div>
+                  )}
                   <div className="gc-hub-grid">
                     {GC_NAV_ITEMS.filter(i => !i.group).map(item => (
                       <button
@@ -3977,12 +3987,15 @@ button.gc-list-row-btn:hover { background: var(--gc-surface-2); }
   -webkit-backdrop-filter: blur(var(--gc-glass-blur)); backdrop-filter: blur(var(--gc-glass-blur));
   transition: background .15s, color .15s, border-color .15s;
 }
+.gc-brand-btn strong {
+  max-width: 9.5em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .gc-brand-btn:hover { color: var(--gc-accent); border-color: rgba(255,255,255,.2); }
 .gc-brand-btn.open {
   color: var(--gc-accent); background: rgba(212,180,90,.18);
   border-color: rgba(212,180,90,.35);
 }
-.gc-brand-chevron { color: inherit; opacity: .75; transition: transform .18s ease; }
+.gc-brand-chevron { color: inherit; opacity: .75; transition: transform .18s ease; flex-shrink: 0; }
 .gc-brand-btn.open .gc-brand-chevron { transform: rotate(180deg); }
 .gc-coin {
   display: inline-flex; align-items: center; justify-content: center;
@@ -4031,6 +4044,13 @@ button.gc-list-row-btn:hover { background: var(--gc-surface-2); }
   -webkit-backdrop-filter: blur(var(--gc-glass-blur)); backdrop-filter: blur(var(--gc-glass-blur));
   animation: gc-hub-in .18s ease;
 }
+.gc-hub-brand {
+  display: flex; align-items: center; gap: 8px;
+  font-family: 'Playfair Display', serif; font-size: 17px; color: #F0E6C8;
+  padding: 2px 4px 10px; margin-bottom: 8px;
+  border-bottom: 1px solid var(--gc-line); pointer-events: none;
+}
+.gc-hub-brand strong { font-weight: 700; }
 @keyframes gc-hub-in {
   from { transform: translateY(-6px); opacity: 0; }
   to { transform: translateY(0); opacity: 1; }
