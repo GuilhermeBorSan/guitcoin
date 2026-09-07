@@ -1045,6 +1045,13 @@ function useGcData(session) {
     catch (err) { console.error(err); setError(gcWriteErrorMsg(err, "salvar o saldo")); await loadData(); return false; }
   };
 
+  const deleteInvestmentSnapshot = async (id) => {
+    setInvestmentSnapshots(prev => prev.filter(s => s.id !== id));
+    if (GC_IS_LOCAL) return true;
+    try { await gcDeleteOne(session, "investment_snapshots", id); return true; }
+    catch (err) { console.error(err); setError(gcWriteErrorMsg(err, "excluir o saldo")); await loadData(); return false; }
+  };
+
   const saveWishlistItem = async (item) => {
     setWishlistItems(prev => prev.some(i => i.id === item.id) ? prev.map(i => i.id === item.id ? item : i) : [...prev, item]);
     if (GC_IS_LOCAL) return true;
@@ -1137,7 +1144,7 @@ function useGcData(session) {
     saveExpenseCategory, reorderExpenseCategories, deleteExpenseCategory,
     saveIncomeSource, deleteIncomeSource, saveIncomeEntry, deleteIncomeEntry, saveIncomeProjection,
     saveExpenseTemplate, deleteExpenseTemplate, saveExpenseInstance, deleteExpenseInstance, toggleExpenseInstancePago,
-    saveInvestmentSnapshot, saveWishlistItem, deleteWishlistItem, toggleWishlistComprado,
+    saveInvestmentSnapshot, deleteInvestmentSnapshot, saveWishlistItem, deleteWishlistItem, toggleWishlistComprado,
     saveWishlistSavingsSnapshot, deleteWishlistSavingsSnapshot,
     saveTrip, deleteTrip, saveTripExpense, deleteTripExpense,
   };
@@ -2010,7 +2017,7 @@ function GcInvestimentos({ snapshots, onEdit }) {
   );
 }
 
-function GcInvestmentSnapshotForm({ initialCompetencia, snapshots, onSave, onClose }) {
+function GcInvestmentSnapshotForm({ initialCompetencia, snapshots, onSave, onDelete, onClose }) {
   const [competencia, setCompetencia] = useState(initialCompetencia);
   const [saldo, setSaldo] = useState(() => { const f = gcFindInvestmentSnapshot(snapshots, initialCompetencia); return f ? String(f.saldo) : ""; });
   const [busy, setBusy] = useState(false);
@@ -2020,10 +2027,11 @@ function GcInvestmentSnapshotForm({ initialCompetencia, snapshots, onSave, onClo
     setSaldo(found ? String(found.saldo) : "");
   }, [competencia]);
 
+  const found = gcFindInvestmentSnapshot(snapshots, competencia);
+
   const submit = async (e) => {
     e.preventDefault();
     setBusy(true);
-    const found = gcFindInvestmentSnapshot(snapshots, competencia);
     const ok = await onSave({
       id: found ? found.id : uid(), competencia,
       saldo: parseFloat(String(saldo).replace(",", ".")) || 0,
@@ -2044,6 +2052,17 @@ function GcInvestmentSnapshotForm({ initialCompetencia, snapshots, onSave, onClo
         </Field>
         <div className="lb-form-footer">
           <div className="lb-form-actions">
+            <div className="lb-form-actions-left">
+              {found && (
+                <button type="button" className="lb-btn danger icon-only" aria-label="Excluir" onClick={async () => {
+                  if (!confirm("Excluir o saldo registrado neste mês?")) return;
+                  const ok = await onDelete(found.id);
+                  if (ok !== false) onClose();
+                }}>
+                  <Trash2 size={16} />
+                </button>
+              )}
+            </div>
             <div className="lb-form-actions-right">
               <button type="button" className="lb-btn ghost" onClick={onClose}>Cancelar</button>
               <button type="submit" className="lb-btn primary" disabled={busy}>{busy ? "Salvando..." : "Salvar"}</button>
@@ -3094,7 +3113,7 @@ function App({ session }) {
     saveExpenseCategory, reorderExpenseCategories, deleteExpenseCategory,
     saveIncomeSource, deleteIncomeSource, saveIncomeEntry, saveIncomeProjection,
     saveExpenseTemplate, deleteExpenseTemplate, saveExpenseInstance, deleteExpenseInstance, toggleExpenseInstancePago,
-    saveInvestmentSnapshot, saveWishlistItem, deleteWishlistItem, toggleWishlistComprado,
+    saveInvestmentSnapshot, deleteInvestmentSnapshot, saveWishlistItem, deleteWishlistItem, toggleWishlistComprado,
     saveWishlistSavingsSnapshot, deleteWishlistSavingsSnapshot,
     saveTrip, deleteTrip, saveTripExpense, deleteTripExpense,
   } = useGcData(session);
@@ -3474,7 +3493,7 @@ function App({ session }) {
           <GcExpenseTemplateForm initial={templateForm.initial} categories={expenseCategories} onSave={saveExpenseTemplate} onDelete={deleteExpenseTemplate} onClose={() => setTemplateForm(null)} />
         )}
         {snapshotForm && (
-          <GcInvestmentSnapshotForm initialCompetencia={snapshotForm.initialCompetencia} snapshots={investmentSnapshots} onSave={saveInvestmentSnapshot} onClose={() => setSnapshotForm(null)} />
+          <GcInvestmentSnapshotForm initialCompetencia={snapshotForm.initialCompetencia} snapshots={investmentSnapshots} onSave={saveInvestmentSnapshot} onDelete={deleteInvestmentSnapshot} onClose={() => setSnapshotForm(null)} />
         )}
         {wishlistForm && (
           <GcWishlistItemForm initial={wishlistForm.initial} onSave={saveWishlistItem} onDelete={deleteWishlistItem} onClose={() => setWishlistForm(null)} />
