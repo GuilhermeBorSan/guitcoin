@@ -272,10 +272,16 @@ function gcCustoTemplate(template) {
 function gcInstancesForCompetencia(instances, competencia) {
   return instances.filter(i => i.competencia === competencia);
 }
-// Linhas da aba Despesas: exclui compras no cartão (vivem só em Cartão).
-// Mantém avulsas, recorrências fora do cartão e lançamentos de fatura.
+// Linhas da aba Despesas: exclui compras avulsas no cartão (vivem só em
+// Cartão). Mantém fora-do-cartão, recorrências no cartão (chip), parceladas
+// (seção Parceladas) e lançamentos de fatura.
 function gcInstancesDespesas(instances, competencia) {
-  return gcInstancesForCompetencia(instances, competencia).filter(i => !i.noCartao);
+  return gcInstancesForCompetencia(instances, competencia).filter(i => {
+    if (!i.noCartao) return true;
+    if (i.totalParcelas) return true; // parcela → seção Parceladas
+    // Recorrência no cartão (ex.: Apple One): mostra com chip.
+    return !!(i.templateId && !i.totalParcelas);
+  });
 }
 function gcMonthInstancesTotal(instances, competencia, cards) {
   return gcInstancesDespesas(instances, competencia).reduce(
@@ -350,6 +356,8 @@ function gcFaturaInstances(instances, faturaCompetencia, cards, cardFilter) {
   const filtro = cardFilter || "all";
   return (instances || []).filter(i => {
     if (!i.noCartao) return false;
+    // Estimativa variável de "Cartão de crédito" em Despesas não é compra na fatura.
+    if (!gcValorConfirmado(i) && !i.totalParcelas) return false;
     if (filtro !== "all" && i.cardId !== filtro) return false;
     if (!(i.competencia === faturaCompetencia || i.competencia === anterior)) return false;
     const diaFechamento = gcDiaFechamentoDoCard(cards, i.cardId);
@@ -365,10 +373,20 @@ function gcFaturaTotalAoVivo(instances, cards, cardId, faturaCompetencia) {
   return gcFaturaInstances(instances, faturaCompetencia, cards, cardId)
     .reduce((s, i) => s + (i.valor || 0), 0);
 }
+// Estimado de uma linha variável amarrada a cartão (ex.: "Cartão de crédito"):
+// total ao vivo da fatura daquele mês na aba Cartão.
+function gcEstimativaFaturaCartao(instance, instances, cards) {
+  if (!instance || gcValorConfirmado(instance) || gcIsPagamentoFatura(instance)) return null;
+  const cardId = instance.cardId || instance.faturaCardId;
+  if (!cardId || !instance.competencia) return null;
+  return gcFaturaTotalAoVivo(instances, cards, cardId, instance.competencia);
+}
 function gcValorExibido(instance, instances, cards) {
   if (gcIsPagamentoFatura(instance)) {
     return gcFaturaTotalAoVivo(instances, cards, instance.faturaCardId, instance.faturaCompetencia);
   }
+  const estimado = gcEstimativaFaturaCartao(instance, instances, cards);
+  if (estimado != null) return estimado;
   return instance.valor || 0;
 }
 function gcValorParaTotal(instance, instances, cards) {
@@ -442,18 +460,29 @@ function gcDiasAteFechamento(diaFechamento, hojeISO) {
 }
 function gcGroupInstances(instances, competencia, categories, cards) {
   const doMes = gcInstancesDespesas(instances, competencia);
+  const parceladas = doMes.filter(i => !!i.totalParcelas)
+    .slice()
+    .sort((a, b) => (a.descricao || "").localeCompare(b.descricao || ""));
+  const resto = doMes.filter(i => !i.totalParcelas);
   const cats = (categories || []).slice().sort((a, b) => (a.ordem || 0) - (b.ordem || 0));
   const known = new Set(cats.map(g => g.id));
   const sumGrupo = (items) => items.reduce((s, i) => s + gcValorParaTotal(i, instances, cards), 0);
   const grupos = cats
     .map(g => {
-      const items = doMes.filter(i => i.grupo === g.id).sort((a, b) => (a.descricao || "").localeCompare(b.descricao || ""));
+      const items = resto.filter(i => i.grupo === g.id).sort((a, b) => (a.descricao || "").localeCompare(b.descricao || ""));
       return { value: g.id, label: g.nome, items, total: sumGrupo(items) };
     })
     .filter(g => g.items.length > 0);
-  const orfaos = doMes.filter(i => !known.has(i.grupo)).sort((a, b) => (a.descricao || "").localeCompare(b.descricao || ""));
+  const orfaos = resto.filter(i => !known.has(i.grupo)).sort((a, b) => (a.descricao || "").localeCompare(b.descricao || ""));
   if (orfaos.length) {
     grupos.push({ value: "_outros", label: "Outros", items: orfaos, total: sumGrupo(orfaos) });
+  }
+  // Seção fixa "Parceladas": só parcelas (Nx), independente da categoria.
+  // Total da seção usa valor exibido (não zera noCartao) — o Meu custo do
+  // mês continua sem duplicar via fatura (gcValorParaTotal / gcCustoInstance).
+  if (parceladas.length) {
+    const totalParceladas = parceladas.reduce((s, i) => s + gcValorExibido(i, instances, cards), 0);
+    grupos.push({ value: "_parceladas", label: "Parceladas", items: parceladas, total: totalParceladas });
   }
   return grupos;
 }
@@ -1821,7 +1850,7 @@ function GcDespesas({ instances, categories, cards, competencia, onTogglePago, o
       </div>
 
       {grupos.length === 0 ? (
-        <EmptyState icon={<FileText size={40} />} title="Nenhuma despesa neste mês" message="Toque no + pra lançar uma compra avulsa, recorrência ou fatura do cartão. Compras no cartão ficam só na aba Cartão." />
+        <EmptyState icon={<FileText size={40} />} title="Nenhuma despesa neste mês" message="Toque no + pra lançar uma compra avulsa, recorrência ou fatura do cartão. Parcelas aparecem em Parceladas; avulsas no cartão ficam só na aba Cartão." />
       ) : (
         grupos.map(g => (
           <div className="gc-group" key={g.value}>
@@ -1832,7 +1861,10 @@ function GcDespesas({ instances, categories, cards, competencia, onTogglePago, o
             <div className="gc-list">
               {g.items.map(inst => {
                 const pendente = !gcValorConfirmado(inst) && !gcIsPagamentoFatura(inst);
+                const estimadoFatura = pendente ? gcEstimativaFaturaCartao(inst, instances, cards) : null;
                 const valorLinha = gcValorExibido(inst, instances, cards);
+                const valorEstimado = estimadoFatura != null ? estimadoFatura : (inst.valor || 0);
+                const nomeCartao = inst.noCartao ? (gcCardNome(cards, inst.cardId) || "Cartão") : null;
                 return (
                   <div className="gc-list-row" key={inst.id}>
                     <GcCheckbox
@@ -1845,11 +1877,16 @@ function GcDespesas({ instances, categories, cards, competencia, onTogglePago, o
                       <span className="gc-list-row-grow">
                         <span className="gc-list-row-title-line">
                           <span className="gc-list-row-title">{inst.descricao}</span>
-                          {gcIsPagamentoFatura(inst) ? (
+                          {gcIsPagamentoFatura(inst) && (
                             <span className="gc-pill gc-pill-muted" title="Fatura do cartão" aria-label="Fatura">Fatura</span>
-                          ) : inst.totalParcelas ? (
+                          )}
+                          {nomeCartao && !gcIsPagamentoFatura(inst) && (
+                            <span className="gc-pill gc-pill-muted" title="Pago no cartão de crédito" aria-label={`Cartão ${nomeCartao}`}>{nomeCartao}</span>
+                          )}
+                          {inst.totalParcelas && (
                             <span className="gc-pill gc-pill-muted" title="Parcela" aria-label={`Parcela ${inst.parcelaAtual} de ${inst.totalParcelas}`}>{inst.parcelaAtual}/{inst.totalParcelas}</span>
-                          ) : inst.templateId && (
+                          )}
+                          {!gcIsPagamentoFatura(inst) && !nomeCartao && !inst.totalParcelas && inst.templateId && (
                             <span className="gc-pill gc-pill-muted gc-pill-icon" title="Recorrente" aria-label="Recorrente"><Repeat size={11} /></span>
                           )}
                           {pendente && <span className="gc-pill gc-pill-gold">a confirmar</span>}
@@ -1857,15 +1894,22 @@ function GcDespesas({ instances, categories, cards, competencia, onTogglePago, o
                             <span className="gc-pill gc-pill-gold">{inst.compartilhadoCom || "Dividido"}</span>
                           )}
                         </span>
-                        {pendente && <small className="gc-list-row-sub">estimado — digite o real</small>}
+                        {pendente && (
+                          <small className="gc-list-row-sub">
+                            {estimadoFatura != null ? "estimado da fatura — digite o real" : "estimado — digite o real"}
+                          </small>
+                        )}
+                        {gcIsPagamentoFatura(inst) && inst.faturaCompetencia && inst.faturaCompetencia !== inst.competencia && (
+                          <small className="gc-list-row-sub">fatura de {competenciaLabel(inst.faturaCompetencia)}</small>
+                        )}
                       </span>
                     </button>
                     {pendente ? (
                       <input
                         type="text" inputMode="decimal" placeholder="0,00"
                         className="gc-row-valor gc-row-valor-estimado gc-money"
-                        defaultValue={inst.valor}
-                        key={inst.id + "-est-" + inst.valor}
+                        defaultValue={valorEstimado}
+                        key={inst.id + "-est-" + valorEstimado}
                         aria-label={`Valor real de ${inst.descricao}`}
                         onClick={e => e.stopPropagation()}
                         onBlur={(e) => {
@@ -1898,6 +1942,12 @@ function GcExpenseInstanceForm({ initial, categories, competencia, defaultNoCart
   const [grupo, setGrupo] = useState(initial ? initial.grupo : ((categories.find(g => g.id === "pessoal") || categories[0] || {}).id || "pessoal"));
   const [valor, setValor] = useState(initial ? String(initial.valor) : "");
   const [pago, setPago] = useState(initial ? initial.pago : false);
+  const [mesDespesasPagamento, setMesDespesasPagamento] = useState(() => {
+    if (initial && (mode === "pagamentoFatura" || gcIsPagamentoFatura(initial))) {
+      return initial.competencia || initial.faturaCompetencia || competenciaAtual();
+    }
+    return "";
+  });
   const [compartilhado, setCompartilhado] = useState(initial ? initial.compartilhado : false);
   const [compartilhadoCom, setCompartilhadoCom] = useState(initial ? initial.compartilhadoCom : "");
   const [minhaParcelaPct, setMinhaParcelaPct] = useState(initial ? String(initial.minhaParcelaPct) : "100");
@@ -1936,7 +1986,7 @@ function GcExpenseInstanceForm({ initial, categories, competencia, defaultNoCart
         pagamentoFatura: true,
         faturaCardId: initial.faturaCardId,
         faturaCompetencia: initial.faturaCompetencia,
-        competencia: initial.faturaCompetencia || initial.competencia,
+        competencia: mesDespesasPagamento || initial.competencia || initial.faturaCompetencia,
         noCartao: false,
         cardId: null,
         diaCompra: null,
@@ -2029,8 +2079,11 @@ function GcExpenseInstanceForm({ initial, categories, competencia, defaultNoCart
           <Field label="Situação">
             <Segmented options={[{ value: "pendente", label: "Pendente" }, { value: "pago", label: "Paga" }]} value={pago ? "pago" : "pendente"} onChange={v => setPago(v === "pago")} />
           </Field>
+          <Field label="Mês em Despesas">
+            <input type="month" value={mesDespesasPagamento} onChange={e => setMesDespesasPagamento(e.target.value)} required />
+          </Field>
           <p className="lb-hint gc-parcela-hint">
-            {nomeCartao} · fatura de {competenciaLabel(initial.faturaCompetencia)} · total ao vivo {gcFmtMoney(totalFaturaAoVivo)} (não editável aqui)
+            {nomeCartao} · fatura de {competenciaLabel(initial.faturaCompetencia)} · total ao vivo {gcFmtMoney(totalFaturaAoVivo)} (origem da fatura não editável)
           </p>
           <div className="lb-form-footer">
             <div className="lb-form-actions">
@@ -2146,45 +2199,68 @@ function GcExpenseInstanceForm({ initial, categories, competencia, defaultNoCart
 function GcDespesasFaturaPicker({ instances, cards, categories, defaultCompetencia, onSave, onClose }) {
   const cardsList = gcNormalizeCards(cards);
   const [cardId, setCardId] = useState(() => (cardsList[0] && cardsList[0].id) || "");
+  // Fatura = origem do total (aba Cartão). Mês em Despesas = onde o gasto entra
+  // (podem diferir — ex.: fatura out/26 lançada nos gastos de set/26).
   const [faturaComp, setFaturaComp] = useState(defaultCompetencia || competenciaAtual());
+  const [mesDespesas, setMesDespesas] = useState(defaultCompetencia || competenciaAtual());
   const [busy, setBusy] = useState(false);
+  const [formError, setFormError] = useState("");
   const total = cardId ? gcFaturaTotalAoVivo(instances, cardsList, cardId, faturaComp) : 0;
   const nomeCartao = gcCardNome(cardsList, cardId) || "Cartão";
 
   const confirmar = async (e) => {
-    e.preventDefault();
+    if (e && e.preventDefault) e.preventDefault();
+    setFormError("");
     if (!cardId) {
-      alert("Escolha o cartão.");
+      setFormError("Escolha o cartão.");
+      return;
+    }
+    if (!faturaComp) {
+      setFormError("Escolha o mês da fatura.");
+      return;
+    }
+    if (!mesDespesas) {
+      setFormError("Escolha o mês em Despesas.");
       return;
     }
     if (gcJaExistePagamentoFatura(instances, cardId, faturaComp)) {
-      alert("Já existe um lançamento dessa fatura em Despesas.");
+      setFormError("Já existe um lançamento dessa fatura em Despesas. Abra o mês em que ela foi lançada ou exclua o lançamento anterior.");
       return;
     }
     setBusy(true);
-    const ok = await onSave({
-      id: uid(),
-      templateId: null,
-      grupo: gcDefaultGrupoFatura(categories),
-      descricao: "Fatura " + nomeCartao,
-      competencia: faturaComp,
-      valor: 0,
-      pago: false,
-      compartilhado: false,
-      compartilhadoCom: "",
-      minhaParcelaPct: 100,
-      valorConfirmado: true,
-      parcelaAtual: null,
-      totalParcelas: null,
-      noCartao: false,
-      diaCompra: null,
-      cardId: null,
-      pagamentoFatura: true,
-      faturaCardId: cardId,
-      faturaCompetencia: faturaComp,
-    });
-    setBusy(false);
-    if (ok !== false) onClose();
+    try {
+      const ok = await onSave({
+        id: uid(),
+        templateId: null,
+        grupo: gcDefaultGrupoFatura(categories),
+        descricao: "Fatura " + nomeCartao,
+        competencia: mesDespesas,
+        valor: 0,
+        pago: false,
+        compartilhado: false,
+        compartilhadoCom: "",
+        minhaParcelaPct: 100,
+        valorConfirmado: true,
+        parcelaAtual: null,
+        totalParcelas: null,
+        noCartao: false,
+        diaCompra: null,
+        cardId: null,
+        pagamentoFatura: true,
+        faturaCardId: cardId,
+        faturaCompetencia: faturaComp,
+      });
+      if (ok === false) {
+        setFormError("Não consegui salvar. Tenta de novo.");
+        return;
+      }
+      onClose();
+    } catch (err) {
+      console.error(err);
+      setFormError("Não consegui salvar. Tenta de novo.");
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -2192,25 +2268,31 @@ function GcDespesasFaturaPicker({ instances, cards, categories, defaultCompetenc
       {cardsList.length === 0 ? (
         <EmptyState icon={<CreditCard size={40} />} title="Nenhum cartão cadastrado" message="Cadastre um cartão na aba Cartão de Crédito (engrenagem) antes de lançar a fatura." />
       ) : (
-        <form onSubmit={confirmar} className="lb-form-grid">
+        <form onSubmit={confirmar} className="lb-form-grid" noValidate>
           <Field label="Cartão" wide select>
-            <select value={cardId} onChange={e => setCardId(e.target.value)} required>
+            <select value={cardId} onChange={e => { setCardId(e.target.value); setFormError(""); }}>
               {cardsList.map(c => <option key={c.id} value={c.id}>{c.nome}</option>)}
             </select>
           </Field>
-          <Field label="Fatura">
-            <input type="month" value={faturaComp} onChange={e => setFaturaComp(e.target.value)} required />
+          <Field label="Fatura (aba Cartão)" wide>
+            <input type="month" value={faturaComp} onChange={e => { setFaturaComp(e.target.value); setFormError(""); }} />
+          </Field>
+          <Field label="Mês em Despesas" wide>
+            <input type="month" value={mesDespesas} onChange={e => { setMesDespesas(e.target.value); setFormError(""); }} />
           </Field>
           <p className="lb-hint gc-parcela-hint">
             Total ao vivo: <strong className="gc-money">{gcFmtMoney(total)}</strong>
-            {" "}(igual à aba Cartão; as compras individuais ficam só lá)
+            {" "}— valor da fatura de {competenciaLabel(faturaComp)}, lançado em {competenciaLabel(mesDespesas)}.
           </p>
+          {formError && <p className="lb-hint gc-parcela-hint" role="alert" style={{ color: "var(--gc-red)" }}>{formError}</p>}
           <div className="lb-form-footer">
             <div className="lb-form-actions">
               <div className="lb-form-actions-left" />
               <div className="lb-form-actions-right">
-                <button type="button" className="lb-btn ghost" onClick={onClose}>Cancelar</button>
-                <button type="submit" className="lb-btn primary" disabled={busy}>{busy ? "Salvando..." : "Confirmar"}</button>
+                <button type="button" className="lb-btn ghost" onClick={onClose} disabled={busy}>Cancelar</button>
+                <button type="button" className="lb-btn primary" disabled={busy} onClick={confirmar}>
+                  {busy ? "Salvando..." : "Confirmar"}
+                </button>
               </div>
             </div>
           </div>
@@ -4331,7 +4413,17 @@ function App({ session }) {
               instances={expenseInstances} templates={expenseTemplates}
               categories={expenseCategories} cards={cardSettings} competencia={despesasComp}
               onTogglePago={toggleExpenseInstancePago}
-              onSaveValor={(inst, valor) => saveExpenseInstance({ ...inst, valor, valorConfirmado: true })}
+              onSaveValor={(inst, valor) => {
+                // Confirmar estimativa amarrada ao cartão: vira despesa normal
+                // (não reaparece como compra na fatura da aba Cartão).
+                const eraEstimativaCartao = !gcValorConfirmado(inst) && !!inst.cardId && !inst.totalParcelas;
+                return saveExpenseInstance({
+                  ...inst,
+                  valor,
+                  valorConfirmado: true,
+                  ...(eraEstimativaCartao ? { noCartao: false } : {}),
+                });
+              }}
               onEditInstance={(inst) => setInstanceForm({
                 initial: inst,
                 mode: gcIsPagamentoFatura(inst) ? "pagamentoFatura" : undefined,
