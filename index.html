@@ -523,9 +523,11 @@ function gcNovaInstanciaDeTemplate(t, competencia) {
   };
 }
 // Geração LAZY das instâncias que faltam. Mensal comum: só até
-// `competenciaLimite` (nunca adianta mês futuro — evita reeditar por
-// reajuste de preço, ex. Disney+). Parcelado: gera TODAS as parcelas até
-// dataFim, inclusive futuras — o valor da parcela já é fixo na compra.
+// `competenciaLimite` — os chamadores passam competenciaAtual() + 1 mês, ou
+// seja, a instância do mês seguinte já é antecipada (trade-off aceito: se o
+// valor mudar antes do mês virar, é preciso reeditar a instância já gerada,
+// não só o template). Parcelado: gera TODAS as parcelas até dataFim,
+// inclusive futuras — o valor da parcela já é fixo na compra.
 // Anual: só o mês mes_cobranca do ano de competenciaLimite.
 function gcGenerateMissingInstances(templates, instances, competenciaLimite) {
   const existentes = new Set(instances.map(i => (i.templateId || "") + "|" + i.competencia));
@@ -1021,7 +1023,7 @@ function useGcData(session) {
   const [expenseInstances, setExpenseInstances] = useState(() => {
     if (!GC_IS_LOCAL) return [];
     const avulsas = GC_DEMO_DATA.expenseInstancesAvulsas || [];
-    const geradas = gcGenerateMissingInstances(GC_DEMO_DATA.expenseTemplates, avulsas, competenciaAtual());
+    const geradas = gcGenerateMissingInstances(GC_DEMO_DATA.expenseTemplates, avulsas, gcShiftCompetencia(competenciaAtual(), 1));
     return [...avulsas, ...geradas];
   });
   const [investmentSnapshots, setInvestmentSnapshots] = useState(GC_IS_LOCAL ? GC_DEMO_DATA.investmentSnapshots : []);
@@ -1100,9 +1102,10 @@ function useGcData(session) {
         } catch (delErr) { console.error(delErr); }
       }
       let instances = instancesTrabalhoMigradas;
-      // Geração lazy: mensais até o mês atual; parcelados até dataFim
-      // (todas as parcelas). Grava em batch pra não repetir em todo load.
-      const novas = gcGenerateMissingInstances(templatesFinais, instances, competenciaAtual());
+      // Geração lazy: mensais até o mês atual + 1 (antecipa a próxima
+      // instância); parcelados até dataFim (todas as parcelas). Grava em
+      // batch pra não repetir em todo load.
+      const novas = gcGenerateMissingInstances(templatesFinais, instances, gcShiftCompetencia(competenciaAtual(), 1));
       if (novas.length) {
         try {
           await gcUpsertMany(session, "expense_instances", novas);
@@ -1231,7 +1234,7 @@ function useGcData(session) {
     // Gera instâncias na hora (local e produção): sem isso, recorrente/
     // parcelada criada pelo Cartão some da fatura até o próximo loadData —
     // e no modo demo o reload ainda reinicia o seed, então "nunca" aparece.
-    const novas = gcGenerateMissingInstances(templatesNext, expenseInstances, competenciaAtual());
+    const novas = gcGenerateMissingInstances(templatesNext, expenseInstances, gcShiftCompetencia(competenciaAtual(), 1));
 
     // Editar "Pago no cartão?"/dia da cobrança num template já existente
     // não deve deixar "congeladas" as instâncias já geradas do mês atual

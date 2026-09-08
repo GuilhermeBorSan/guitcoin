@@ -151,12 +151,20 @@ snake_case) estão todas implementadas: `income_sources`/`income_entries`/
   grid — não cabe uma matriz categoria×dia na largura de um iPhone.
 
 **Geração de instância recorrente é lazy, no carregamento dos dados**:
-`gcGenerateMissingInstances(templates, instances, competenciaAtual)` calcula
+`gcGenerateMissingInstances(templates, instances, competenciaLimite)` calcula
 todo par `(template, mês)` que falta e cria (`pago:false`, valor/divisão
-copiados do template) — mensal gera todo mês desde `data_inicio` até hoje (ou
-`data_fim`); anual só gera no mês `mes_cobranca` do ano corrente. Nunca gera
-meses futuros adiantado (evita ter que reeditar instância por causa de
-reajuste de preço, ex. Disney+ subindo mês a mês).
+copiados do template) — mensal gera todo mês desde `data_inicio` até
+`competenciaLimite`; anual só gera no mês `mes_cobranca` do ano de
+`competenciaLimite`. Os 3 pontos de chamada (`useGcData` no load e no
+`saveExpenseTemplate`, seed do modo demo) passam `competenciaAtual()` **+ 1
+mês**, não o mês atual puro — decisão tomada pra resolver a fatura do
+Cartão de Crédito aparecendo vazia pro mês seguinte antes da virada do mês.
+Trade-off aceito conscientemente: se o valor de uma recorrência mudar antes
+do mês virar (ex. Disney+ reajustar), a instância do mês seguinte já foi
+gerada com o valor antigo e precisa ser editada manualmente — editar só o
+template não é mais suficiente pra esse caso. (Antes desta mudança, a regra
+era "nunca gerar mês futuro adiantado" exatamente pra evitar esse
+retrabalho; ver histórico do repo se precisar reverter.)
 
 ## Design (mesma família visual de Guitchelin/Letterborgs, paleta própria)
 - Tema claro, fundo branco. Verde-dinheiro de destaque (`--gc-accent:
