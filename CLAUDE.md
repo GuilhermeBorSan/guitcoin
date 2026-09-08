@@ -246,7 +246,11 @@ retrabalho; ver histórico do repo se precisar reverter.)
   + statcards), `GcRecorrencias` (CRUD de templates),
   `GcExpenseInstanceForm`, `GcExpenseTemplateForm`, motor
   `gcGenerateMissingInstances` (geração lazy até o mês atual, mensal ou
-  anual, respeitando pausa/data-fim).
+  anual, respeitando pausa/data-fim). `GcRecorrencias` também tem a
+  engrenagem (mesma posição/estilo da aba Deste mês) que abre
+  `GcManageCategoriesModal` — como as categorias (`expense_categories`,
+  campo `ordem`) são compartilhadas entre as duas sub-abas, reordenar ali
+  reordena as subseções nas duas.
 - ~~Fase 3 — Investimentos~~ ✅ feito: `GcInvestimentos` (saldo mensal
   editável inline + histórico + statcards Saldo em Caixa/Poder de Compra),
   `GcInvestmentSnapshotForm`. **`GC_PODER_COMPRA_BASE = 1000` confirmado
@@ -363,7 +367,10 @@ Firebase ser criado).
   "Anual · <mês>", "pausada" na Cerâmica, "0% minha parte" nas contas de
   Casa); FAB abre direto o formulário de nova recorrência (campo "Mês de
   cobrança" só quando frequência é Anual). Hub **não** lista Recorrências
-  como item próprio.
+  como item próprio. Confirme que a engrenagem também aparece em
+  Recorrências (mesma posição da aba Deste mês) e abre o mesmo modal de
+  categorias; reordene uma categoria ali e volte pra Deste mês — a nova
+  ordem das subseções deve valer nas duas sub-abas.
 
 - **Investimentos (Fase 3)**: abra Investimentos pela gaveta — em modo demo
   deve mostrar Saldo em Caixa R$51.773,18 e Poder de Compra 5.177,32%
