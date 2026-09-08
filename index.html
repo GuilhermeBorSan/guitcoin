@@ -277,6 +277,19 @@ function gcFaturaCompetencia(competencia, diaCompra, diaFechamento) {
   if (!diaCompra || !diaFechamento) return competencia;
   return diaCompra > diaFechamento ? gcShiftCompetencia(competencia, 1) : competencia;
 }
+// Inverso de gcFaturaCompetencia: dada a fatura que o usuário escolheu no
+// form do Cartão, devolve a competência de compra a gravar pra que o filtro
+// atual continue apontando pra essa fatura (evita double-shift).
+function gcCompetenciaDeFatura(faturaEscolhida, diaCompra, diaFechamento) {
+  if (!faturaEscolhida) return faturaEscolhida;
+  if (!diaCompra || !diaFechamento) return faturaEscolhida;
+  return diaCompra > diaFechamento ? gcShiftCompetencia(faturaEscolhida, -1) : faturaEscolhida;
+}
+function gcDataDeDiaCompra(competencia, diaCompra) {
+  if (!competencia || !diaCompra) return todayISO();
+  const day = Math.min(31, Math.max(1, parseInt(diaCompra, 10) || 1));
+  return `${competencia}-${String(day).padStart(2, "0")}`;
+}
 // Instâncias que caem na fatura de uma competência: olha o próprio mês (o
 // que não passou do fechamento) e o mês anterior (o que passou do
 // fechamento e foi empurrado pra frente).
@@ -1703,7 +1716,8 @@ function GcDespesas({ instances, categories, competencia, onTogglePago, onSaveVa
   );
 }
 
-function GcExpenseInstanceForm({ initial, categories, competencia, defaultNoCartao, onSave, onDelete, onClose }) {
+function GcExpenseInstanceForm({ initial, categories, competencia, defaultNoCartao, mode, diaFechamento, defaultFatura, onSave, onDelete, onClose }) {
+  const isCartao = mode === "cartao";
   const [descricao, setDescricao] = useState(initial ? initial.descricao : "Compras");
   const [grupo, setGrupo] = useState(initial ? initial.grupo : ((categories.find(g => g.id === "pessoal") || categories[0] || {}).id || "pessoal"));
   const [valor, setValor] = useState(initial ? String(initial.valor) : "");
@@ -1711,34 +1725,63 @@ function GcExpenseInstanceForm({ initial, categories, competencia, defaultNoCart
   const [compartilhado, setCompartilhado] = useState(initial ? initial.compartilhado : false);
   const [compartilhadoCom, setCompartilhadoCom] = useState(initial ? initial.compartilhadoCom : "");
   const [minhaParcelaPct, setMinhaParcelaPct] = useState(initial ? String(initial.minhaParcelaPct) : "100");
-  const [noCartao, setNoCartao] = useState(initial ? !!initial.noCartao : !!defaultNoCartao);
+  const [noCartao, setNoCartao] = useState(isCartao ? true : (initial ? !!initial.noCartao : !!defaultNoCartao));
   const [diaCompra, setDiaCompra] = useState(initial && initial.diaCompra ? String(initial.diaCompra) : "");
+  const [dataCompra, setDataCompra] = useState(() => {
+    if (!isCartao) return "";
+    if (initial && initial.diaCompra && initial.competencia) return gcDataDeDiaCompra(initial.competencia, initial.diaCompra);
+    return todayISO();
+  });
+  const [fatura, setFatura] = useState(() => {
+    if (!isCartao) return "";
+    if (initial) return gcFaturaCompetencia(initial.competencia, initial.diaCompra, diaFechamento) || initial.competencia || defaultFatura || competencia || competenciaAtual();
+    return defaultFatura || competencia || competenciaAtual();
+  });
   const [busy, setBusy] = useState(false);
 
   const submit = async (e) => {
     e.preventDefault();
     setBusy(true);
+    let competenciaSalva = initial ? initial.competencia : competencia;
+    let noCartaoSalvo = noCartao;
+    let diaCompraSalvo = noCartao ? (parseInt(diaCompra, 10) || null) : null;
+    let pagoSalvo = pago;
+    let compartilhadoSalvo = compartilhado;
+    let compartilhadoComSalvo = compartilhado ? compartilhadoCom : "";
+    let minhaParcelaPctSalvo = compartilhado ? (parseFloat(minhaParcelaPct) || 0) : 100;
+
+    if (isCartao) {
+      const dia = parseInt((dataCompra || "").slice(8, 10), 10) || null;
+      noCartaoSalvo = true;
+      diaCompraSalvo = dia;
+      pagoSalvo = initial ? initial.pago : false;
+      compartilhadoSalvo = false;
+      compartilhadoComSalvo = "";
+      minhaParcelaPctSalvo = 100;
+      competenciaSalva = gcCompetenciaDeFatura(fatura || competenciaAtual(), dia, diaFechamento);
+    }
+
     const ok = await onSave({
       id: initial ? initial.id : uid(),
       templateId: initial ? initial.templateId : null,
       grupo, descricao: descricao.trim() || "Compras",
-      competencia: initial ? initial.competencia : competencia,
+      competencia: competenciaSalva,
       valor: parseFloat(String(valor).replace(",", ".")) || 0,
-      pago, compartilhado, compartilhadoCom: compartilhado ? compartilhadoCom : "",
-      minhaParcelaPct: compartilhado ? (parseFloat(minhaParcelaPct) || 0) : 100,
+      pago: pagoSalvo, compartilhado: compartilhadoSalvo, compartilhadoCom: compartilhadoComSalvo,
+      minhaParcelaPct: minhaParcelaPctSalvo,
       valorConfirmado: true,
       // Número de parcela é copiado do template no momento da geração, não
       // editável aqui — só preservar o que já existia.
       parcelaAtual: (initial && initial.parcelaAtual) || null,
       totalParcelas: (initial && initial.totalParcelas) || null,
-      noCartao, diaCompra: noCartao ? (parseInt(diaCompra, 10) || null) : null,
+      noCartao: noCartaoSalvo, diaCompra: diaCompraSalvo,
     });
     setBusy(false);
     if (ok !== false) onClose();
   };
 
   return (
-    <Modal title={initial ? "Editar despesa" : "Nova despesa avulsa"} onClose={onClose}>
+    <Modal title={isCartao ? (initial ? "Editar despesa no cartão" : "Nova despesa no cartão") : (initial ? "Editar despesa" : "Nova despesa avulsa")} onClose={onClose}>
       <form onSubmit={submit} className="lb-form-grid">
         <Field label="Descrição" wide>
           <input value={descricao} onChange={e => setDescricao(e.target.value)} required autoFocus />
@@ -1754,29 +1797,42 @@ function GcExpenseInstanceForm({ initial, categories, competencia, defaultNoCart
         <Field label="Valor">
           <input type="number" inputMode="decimal" step="0.01" value={valor} onChange={e => setValor(e.target.value)} required />
         </Field>
-        <Field label="Situação">
-          <Segmented options={[{ value: "pendente", label: "Pendente" }, { value: "pago", label: "Paga" }]} value={pago ? "pago" : "pendente"} onChange={v => setPago(v === "pago")} />
-        </Field>
-        <Field label="Dividida com terceiro?" wide>
-          <Segmented options={[{ value: "nao", label: "Não" }, { value: "sim", label: "Sim" }]} value={compartilhado ? "sim" : "nao"} onChange={v => setCompartilhado(v === "sim")} />
-        </Field>
-        {compartilhado && (
+        {isCartao ? (
           <>
-            <Field label="Dividida com">
-              <input value={compartilhadoCom} onChange={e => setCompartilhadoCom(e.target.value)} placeholder="Ex.: Bruno" />
+            <Field label="Data da compra">
+              <input type="date" value={dataCompra} onChange={e => setDataCompra(e.target.value)} required />
             </Field>
-            <Field label="Minha parte (%)">
-              <input type="number" min="0" max="100" step="1" value={minhaParcelaPct} onChange={e => setMinhaParcelaPct(e.target.value)} />
+            <Field label="Fatura">
+              <input type="month" value={fatura} onChange={e => setFatura(e.target.value)} required />
             </Field>
           </>
-        )}
-        <Field label="Pago no cartão de crédito?" wide>
-          <Segmented options={[{ value: "nao", label: "Não" }, { value: "sim", label: "Sim" }]} value={noCartao ? "sim" : "nao"} onChange={v => setNoCartao(v === "sim")} />
-        </Field>
-        {noCartao && (
-          <Field label="Dia da cobrança no cartão (opcional)">
-            <input type="number" min="1" max="31" step="1" value={diaCompra} onChange={e => setDiaCompra(e.target.value)} placeholder="Ex.: 12" />
-          </Field>
+        ) : (
+          <>
+            <Field label="Situação">
+              <Segmented options={[{ value: "pendente", label: "Pendente" }, { value: "pago", label: "Paga" }]} value={pago ? "pago" : "pendente"} onChange={v => setPago(v === "pago")} />
+            </Field>
+            <Field label="Dividida com terceiro?" wide>
+              <Segmented options={[{ value: "nao", label: "Não" }, { value: "sim", label: "Sim" }]} value={compartilhado ? "sim" : "nao"} onChange={v => setCompartilhado(v === "sim")} />
+            </Field>
+            {compartilhado && (
+              <>
+                <Field label="Dividida com">
+                  <input value={compartilhadoCom} onChange={e => setCompartilhadoCom(e.target.value)} placeholder="Ex.: Bruno" />
+                </Field>
+                <Field label="Minha parte (%)">
+                  <input type="number" min="0" max="100" step="1" value={minhaParcelaPct} onChange={e => setMinhaParcelaPct(e.target.value)} />
+                </Field>
+              </>
+            )}
+            <Field label="Pago no cartão de crédito?" wide>
+              <Segmented options={[{ value: "nao", label: "Não" }, { value: "sim", label: "Sim" }]} value={noCartao ? "sim" : "nao"} onChange={v => setNoCartao(v === "sim")} />
+            </Field>
+            {noCartao && (
+              <Field label="Dia da cobrança no cartão (opcional)">
+                <input type="number" min="1" max="31" step="1" value={diaCompra} onChange={e => setDiaCompra(e.target.value)} placeholder="Ex.: 12" />
+              </Field>
+            )}
+          </>
         )}
         <div className="lb-form-footer">
           <div className="lb-form-actions">
@@ -1884,7 +1940,8 @@ function GcRecorrencias({ templates, categories, onEdit }) {
   );
 }
 
-function GcExpenseTemplateForm({ initial, categories, onSave, onDelete, onClose }) {
+function GcExpenseTemplateForm({ initial, categories, mode, defaultParcelado, defaultFatura, onSave, onDelete, onClose }) {
+  const isCartao = mode === "cartao";
   const gruposDisponiveis = categories || [];
   const [nome, setNome] = useState(initial ? initial.nome : "");
   const [grupo, setGrupo] = useState(initial ? initial.grupo : ((gruposDisponiveis.find(g => g.id === "pessoal") || gruposDisponiveis[0] || {}).id || "pessoal"));
@@ -1892,14 +1949,20 @@ function GcExpenseTemplateForm({ initial, categories, onSave, onDelete, onClose 
   const [mesCobranca, setMesCobranca] = useState(initial && initial.mesCobranca ? String(initial.mesCobranca) : "1");
   const [valorTipo, setValorTipo] = useState(initial ? gcValorTipo(initial) : "fixo");
   const [valorPadrao, setValorPadrao] = useState(initial ? String(initial.valorPadrao) : "");
-  const [dataInicio, setDataInicio] = useState(initial ? initial.dataInicio : competenciaAtual());
+  const [dataInicio, setDataInicio] = useState(initial ? initial.dataInicio : (defaultFatura || competenciaAtual()));
   const [dataFim, setDataFim] = useState(initial && initial.dataFim ? initial.dataFim : "");
-  const [parcelado, setParcelado] = useState(initial ? !!initial.parcelado : false);
+  const [parcelado, setParcelado] = useState(initial ? !!initial.parcelado : !!defaultParcelado);
   const [totalParcelas, setTotalParcelas] = useState(initial && initial.totalParcelas ? String(initial.totalParcelas) : "12");
   // Maioria das compras parceladas é no cartão — pré-marca "Sim" só numa
-  // recorrência nova parcelada, mas continua editável.
-  const [noCartao, setNoCartao] = useState(initial ? !!initial.noCartao : false);
+  // recorrência nova parcelada, mas continua editável (exceto no modo cartão,
+  // onde noCartao é sempre true).
+  const [noCartao, setNoCartao] = useState(isCartao ? true : (initial ? !!initial.noCartao : false));
   const [diaCompra, setDiaCompra] = useState(initial && initial.diaCompra ? String(initial.diaCompra) : "");
+  const [dataCobranca, setDataCobranca] = useState(() => {
+    if (!isCartao) return "";
+    if (initial && initial.diaCompra && initial.dataInicio) return gcDataDeDiaCompra(initial.dataInicio, initial.diaCompra);
+    return todayISO();
+  });
   const [compartilhado, setCompartilhado] = useState(initial ? initial.compartilhado : false);
   const [compartilhadoCom, setCompartilhadoCom] = useState(initial ? initial.compartilhadoCom : "");
   const [minhaParcelaPct, setMinhaParcelaPct] = useState(initial ? String(initial.minhaParcelaPct) : "100");
@@ -1909,17 +1972,36 @@ function GcExpenseTemplateForm({ initial, categories, onSave, onDelete, onClose 
   // Parcelamento força mensal e calcula sozinho até quando gerar (dataFim) —
   // gcGenerateMissingInstances já para de gerar sozinha nesse mês, sem
   // precisar de nenhuma mudança no motor de geração.
-  const frequenciaEfetiva = parcelado ? "mensal" : frequencia;
+  // No modo cartão o fluxo já decide: recorrente = false, parcelada = true.
+  const parceladoFinal = isCartao ? !!defaultParcelado : parcelado;
+  const frequenciaEfetiva = parceladoFinal ? "mensal" : frequencia;
   const totalParcelasNum = parseInt(totalParcelas, 10) || 0;
-  const dataFimParcelado = parcelado && dataInicio && totalParcelasNum > 0
+  const dataFimParcelado = parceladoFinal && dataInicio && totalParcelasNum > 0
     ? gcShiftCompetencia(dataInicio, totalParcelasNum - 1)
     : "";
 
   const submit = async (e) => {
     e.preventDefault();
     if (!nome.trim() || !dataInicio) return;
-    if (parcelado && totalParcelasNum < 1) return;
+    if (parceladoFinal && totalParcelasNum < 1) return;
     setBusy(true);
+    let noCartaoSalvo = noCartao;
+    let diaCompraSalvo = noCartao ? (parseInt(diaCompra, 10) || null) : null;
+    let compartilhadoSalvo = compartilhado;
+    let compartilhadoComSalvo = compartilhado ? compartilhadoCom : "";
+    let minhaParcelaPctSalvo = compartilhado ? (parseFloat(minhaParcelaPct) || 0) : 100;
+    let ativoSalvo = ativo;
+
+    if (isCartao) {
+      const dia = parseInt((dataCobranca || "").slice(8, 10), 10) || null;
+      noCartaoSalvo = true;
+      diaCompraSalvo = dia;
+      compartilhadoSalvo = false;
+      compartilhadoComSalvo = "";
+      minhaParcelaPctSalvo = 100;
+      ativoSalvo = true;
+    }
+
     const ok = await onSave({
       id: initial ? initial.id : uid(),
       nome: nome.trim(), grupo, frequencia: frequenciaEfetiva,
@@ -1927,20 +2009,26 @@ function GcExpenseTemplateForm({ initial, categories, onSave, onDelete, onClose 
       diaVencimento: (initial && initial.diaVencimento) || null,
       valorTipo,
       valorPadrao: parseFloat(String(valorPadrao).replace(",", ".")) || 0,
-      compartilhado, compartilhadoCom: compartilhado ? compartilhadoCom : "",
-      minhaParcelaPct: compartilhado ? (parseFloat(minhaParcelaPct) || 0) : 100,
-      ativo, dataInicio,
-      parcelado, totalParcelas: parcelado ? totalParcelasNum : null,
-      dataFim: parcelado ? dataFimParcelado : (dataFim || null),
-      noCartao, diaCompra: noCartao ? (parseInt(diaCompra, 10) || null) : null,
+      compartilhado: compartilhadoSalvo, compartilhadoCom: compartilhadoComSalvo,
+      minhaParcelaPct: minhaParcelaPctSalvo,
+      ativo: ativoSalvo, dataInicio,
+      parcelado: parceladoFinal, totalParcelas: parceladoFinal ? totalParcelasNum : null,
+      dataFim: parceladoFinal ? dataFimParcelado : (dataFim || null),
+      noCartao: noCartaoSalvo, diaCompra: noCartaoSalvo ? diaCompraSalvo : null,
       observacao: (initial && initial.observacao) || "",
     });
     setBusy(false);
     if (ok !== false) onClose();
   };
 
+  const tituloModal = isCartao
+    ? (parceladoFinal
+      ? (initial ? "Editar compra parcelada" : "Nova compra parcelada")
+      : (initial ? "Editar recorrência no cartão" : "Nova recorrência no cartão"))
+    : (initial ? "Editar recorrência" : "Nova recorrência");
+
   return (
-    <Modal title={initial ? "Editar recorrência" : "Nova recorrência"} onClose={onClose} wide>
+    <Modal title={tituloModal} onClose={onClose} wide>
       <form onSubmit={submit} className="lb-form-grid">
         <Field label="Nome" wide>
           <input value={nome} onChange={e => setNome(e.target.value)} placeholder="Ex.: Psicóloga" autoFocus required />
@@ -1953,72 +2041,89 @@ function GcExpenseTemplateForm({ initial, categories, onSave, onDelete, onClose 
         <Field label="Tipo de valor">
           <Segmented options={[{ value: "fixo", label: "Fixo" }, { value: "variavel", label: "Variável" }]} value={valorTipo} onChange={setValorTipo} />
         </Field>
-        <Field label={valorTipo === "variavel" ? "Valor estimado" : "Valor padrão"} wide>
+        <Field label={valorTipo === "variavel" ? "Valor estimado" : (parceladoFinal ? "Valor da parcela" : "Valor padrão")} wide>
           <input type="number" inputMode="decimal" step="0.01" value={valorPadrao} onChange={e => setValorPadrao(e.target.value)} required />
         </Field>
-        <Field label="Compra parcelada?" wide>
-          <Segmented options={[{ value: "nao", label: "Não" }, { value: "sim", label: "Sim (ex.: 10x no cartão)" }]} value={parcelado ? "sim" : "nao"} onChange={v => {
-            const sim = v === "sim";
-            setParcelado(sim);
-            // Maioria das compras parceladas é no cartão — só pré-marca em
-            // recorrência nova, sem sobrescrever uma edição já em curso.
-            if (sim && !initial) setNoCartao(true);
-          }} />
-        </Field>
-        {!parcelado && (
+        {!isCartao && (
+          <Field label="Compra parcelada?" wide>
+            <Segmented options={[{ value: "nao", label: "Não" }, { value: "sim", label: "Sim (ex.: 10x no cartão)" }]} value={parcelado ? "sim" : "nao"} onChange={v => {
+              const sim = v === "sim";
+              setParcelado(sim);
+              // Maioria das compras parceladas é no cartão — só pré-marca em
+              // recorrência nova, sem sobrescrever uma edição já em curso.
+              if (sim && !initial) setNoCartao(true);
+            }} />
+          </Field>
+        )}
+        {!parceladoFinal && (
           <Field label="Frequência" wide>
             <Segmented options={[{ value: "mensal", label: "Mensal" }, { value: "anual", label: "Anual (1x/ano)" }]} value={frequencia} onChange={setFrequencia} />
           </Field>
         )}
-        {!parcelado && frequencia === "anual" && (
+        {!parceladoFinal && frequencia === "anual" && (
           <Field label="Mês de cobrança" wide select>
             <select value={mesCobranca} onChange={e => setMesCobranca(e.target.value)}>
               {MONTH_LABELS.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
             </select>
           </Field>
         )}
-        <Field label="Começa em">
-          <input type="month" value={dataInicio} onChange={e => setDataInicio(e.target.value)} required />
-        </Field>
-        {parcelado ? (
+        {isCartao ? (
+          <>
+            <Field label={parceladoFinal ? "Data da compra" : "Data da cobrança"}>
+              <input type="date" value={dataCobranca} onChange={e => setDataCobranca(e.target.value)} required />
+            </Field>
+            <Field label={parceladoFinal ? "Fatura da 1ª parcela" : "Fatura inicial"}>
+              <input type="month" value={dataInicio} onChange={e => setDataInicio(e.target.value)} required />
+            </Field>
+          </>
+        ) : (
+          <Field label="Começa em">
+            <input type="month" value={dataInicio} onChange={e => setDataInicio(e.target.value)} required />
+          </Field>
+        )}
+        {parceladoFinal ? (
           <Field label="Quantidade de parcelas">
             <input type="number" min="1" step="1" value={totalParcelas} onChange={e => setTotalParcelas(e.target.value)} required />
           </Field>
-        ) : (
+        ) : !isCartao ? (
           <Field label="Termina em (opcional)">
             <input type="month" value={dataFim} onChange={e => setDataFim(e.target.value)} />
           </Field>
-        )}
-        {parcelado && dataFimParcelado && (
+        ) : null}
+        {parceladoFinal && dataFimParcelado && (
           <p className="lb-hint gc-parcela-hint">
             Última parcela ({totalParcelasNum}/{totalParcelasNum}) em {competenciaLabel(dataFimParcelado)}.
             Reduzir a quantidade depois não apaga parcelas futuras já geradas — é preciso excluí-las manualmente.
           </p>
         )}
-        <Field label="Dividida com terceiro?" wide>
-          <Segmented options={[{ value: "nao", label: "Não" }, { value: "sim", label: "Sim" }]} value={compartilhado ? "sim" : "nao"} onChange={v => setCompartilhado(v === "sim")} />
-        </Field>
-        {compartilhado && (
+        {!isCartao && (
           <>
-            <Field label="Dividida com">
-              <input value={compartilhadoCom} onChange={e => setCompartilhadoCom(e.target.value)} placeholder="Ex.: Bruno" />
+            <Field label="Dividida com terceiro?" wide>
+              <Segmented options={[{ value: "nao", label: "Não" }, { value: "sim", label: "Sim" }]} value={compartilhado ? "sim" : "nao"} onChange={v => setCompartilhado(v === "sim")} />
             </Field>
-            <Field label="Minha parte (%)">
-              <input type="number" min="0" max="100" step="1" value={minhaParcelaPct} onChange={e => setMinhaParcelaPct(e.target.value)} />
+            {compartilhado && (
+              <>
+                <Field label="Dividida com">
+                  <input value={compartilhadoCom} onChange={e => setCompartilhadoCom(e.target.value)} placeholder="Ex.: Bruno" />
+                </Field>
+                <Field label="Minha parte (%)">
+                  <input type="number" min="0" max="100" step="1" value={minhaParcelaPct} onChange={e => setMinhaParcelaPct(e.target.value)} />
+                </Field>
+              </>
+            )}
+            <Field label="Pago no cartão de crédito?" wide>
+              <Segmented options={[{ value: "nao", label: "Não" }, { value: "sim", label: "Sim" }]} value={noCartao ? "sim" : "nao"} onChange={v => setNoCartao(v === "sim")} />
+            </Field>
+            {noCartao && (
+              <Field label="Dia da cobrança no cartão (opcional)">
+                <input type="number" min="1" max="31" step="1" value={diaCompra} onChange={e => setDiaCompra(e.target.value)} placeholder="Ex.: 12" />
+              </Field>
+            )}
+            <Field label="Ativa?" wide>
+              <Segmented options={[{ value: "ativa", label: "Ativa" }, { value: "pausada", label: "Pausada" }]} value={ativo ? "ativa" : "pausada"} onChange={v => setAtivo(v === "ativa")} />
             </Field>
           </>
         )}
-        <Field label="Pago no cartão de crédito?" wide>
-          <Segmented options={[{ value: "nao", label: "Não" }, { value: "sim", label: "Sim" }]} value={noCartao ? "sim" : "nao"} onChange={v => setNoCartao(v === "sim")} />
-        </Field>
-        {noCartao && (
-          <Field label="Dia da cobrança no cartão (opcional)">
-            <input type="number" min="1" max="31" step="1" value={diaCompra} onChange={e => setDiaCompra(e.target.value)} placeholder="Ex.: 12" />
-          </Field>
-        )}
-        <Field label="Ativa?" wide>
-          <Segmented options={[{ value: "ativa", label: "Ativa" }, { value: "pausada", label: "Pausada" }]} value={ativo ? "ativa" : "pausada"} onChange={v => setAtivo(v === "ativa")} />
-        </Field>
         <div className="lb-form-footer">
           <div className="lb-form-actions">
             <div className="lb-form-actions-left">
@@ -3425,6 +3530,7 @@ function App({ session }) {
   const [tripForm, setTripForm] = useState(null);
   const [tripExpenseForm, setTripExpenseForm] = useState(null);
   const [despesasFabMenu, setDespesasFabMenu] = useState(false);
+  const [cartaoFabMenu, setCartaoFabMenu] = useState(false);
   const [dashboardFabMenu, setDashboardFabMenu] = useState(false);
   const [sonhosFabMenu, setSonhosFabMenu] = useState(false);
   const [topbarFilterOpen, setTopbarFilterOpen] = useState(false);
@@ -3657,7 +3763,7 @@ function App({ session }) {
               instances={expenseInstances} templates={expenseTemplates} categories={expenseCategories} competencia={cartaoComp}
               diaFechamento={cardSettings ? cardSettings.diaFechamento : null}
               onTogglePago={toggleExpenseInstancePago}
-              onEditInstance={(inst) => setInstanceForm({ initial: inst })}
+              onEditInstance={(inst) => setInstanceForm({ initial: inst, mode: "cartao" })}
               onOpenSettings={() => setCardSettingsForm(true)}
             />
           ) : subTab === "sonhos" ? (
@@ -3711,7 +3817,7 @@ function App({ session }) {
               else setDespesasFabMenu(true);
             }
             else if (subTab === "investimentos") setSnapshotForm({ initialCompetencia: competenciaAtual() });
-            else if (subTab === "cartao") setInstanceForm({ initial: null, defaultNoCartao: true, competencia: cartaoComp });
+            else if (subTab === "cartao") setCartaoFabMenu(true);
             else if (subTab === "sonhos") setSonhosFabMenu(true);
             else if (subTab === "conta") setContaItemForm({ initial: null });
             else if (subTab === "viagens") {
@@ -3779,6 +3885,24 @@ function App({ session }) {
             </div>
           </Modal>
         )}
+        {cartaoFabMenu && (
+          <Modal title="O que você quer lançar no cartão?" onClose={() => setCartaoFabMenu(false)}>
+            <div className="gc-fab-menu">
+              <button type="button" className="gc-fab-option" onClick={() => { setCartaoFabMenu(false); setInstanceForm({ initial: null, mode: "cartao", competencia: cartaoComp, defaultFatura: cartaoComp }); }}>
+                <FileText size={22} />
+                <span className="gc-fab-option-txt"><strong>Despesa avulsa</strong><small>Uma compra pontual nesta fatura</small></span>
+              </button>
+              <button type="button" className="gc-fab-option" onClick={() => { setCartaoFabMenu(false); setTemplateForm({ initial: null, mode: "cartao", defaultParcelado: false, defaultFatura: cartaoComp }); }}>
+                <Repeat size={22} />
+                <span className="gc-fab-option-txt"><strong>Recorrente</strong><small>Assinatura / cobrança mensal no cartão</small></span>
+              </button>
+              <button type="button" className="gc-fab-option" onClick={() => { setCartaoFabMenu(false); setTemplateForm({ initial: null, mode: "cartao", defaultParcelado: true, defaultFatura: cartaoComp }); }}>
+                <CreditCard size={22} />
+                <span className="gc-fab-option-txt"><strong>Parcelada</strong><small>Compra em Nx (ex.: notebook 10x)</small></span>
+              </button>
+            </div>
+          </Modal>
+        )}
         {sonhosFabMenu && (
           <Modal title="O que você quer fazer?" onClose={() => setSonhosFabMenu(false)}>
             <div className="gc-fab-menu">
@@ -3799,6 +3923,9 @@ function App({ session }) {
             categories={expenseCategories}
             competencia={instanceForm.competencia || despesasComp}
             defaultNoCartao={instanceForm.defaultNoCartao}
+            mode={instanceForm.mode}
+            diaFechamento={cardSettings ? cardSettings.diaFechamento : null}
+            defaultFatura={instanceForm.defaultFatura}
             onSave={saveExpenseInstance} onDelete={deleteExpenseInstance} onClose={() => setInstanceForm(null)}
           />
         )}
@@ -3810,7 +3937,16 @@ function App({ session }) {
           />
         )}
         {templateForm && (
-          <GcExpenseTemplateForm initial={templateForm.initial} categories={expenseCategories} onSave={saveExpenseTemplate} onDelete={deleteExpenseTemplate} onClose={() => setTemplateForm(null)} />
+          <GcExpenseTemplateForm
+            initial={templateForm.initial}
+            categories={expenseCategories}
+            mode={templateForm.mode}
+            defaultParcelado={templateForm.defaultParcelado}
+            defaultFatura={templateForm.defaultFatura}
+            onSave={saveExpenseTemplate}
+            onDelete={deleteExpenseTemplate}
+            onClose={() => setTemplateForm(null)}
+          />
         )}
         {snapshotForm && (
           <GcInvestmentSnapshotForm initialCompetencia={snapshotForm.initialCompetencia} snapshots={investmentSnapshots} onSave={saveInvestmentSnapshot} onDelete={deleteInvestmentSnapshot} onClose={() => setSnapshotForm(null)} />
