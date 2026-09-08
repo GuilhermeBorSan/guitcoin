@@ -2426,7 +2426,7 @@ function GcManageCategoriesModal({ categories, onSave, onReorder, onDelete, onCl
    Lista PLANA (sem agrupar por categoria). Fechamento é por cartão
    (ver gcFaturaCompetencia/gcFaturaInstances).
 ----------------------------------------------------------------*/
-function GcCartao({ instances, templates, categories, cards, competencia, cardFilter, onCardFilterChange, onTogglePago, onEditInstance, onOpenSettings }) {
+function GcCartao({ instances, templates, categories, cards, competencia, cardFilter, onCardFilterChange, onEditInstance, onOpenSettings }) {
   const cardsList = gcNormalizeCards(cards);
   const filtro = cardFilter || "all";
   const tabOptions = [
@@ -2491,12 +2491,6 @@ function GcCartao({ instances, templates, categories, cards, competencia, cardFi
             const nomeCartao = showCardName ? gcCardNome(cardsList, inst.cardId) : null;
             return (
               <div className="gc-list-row" key={inst.id}>
-                <GcCheckbox
-                  checked={inst.pago}
-                  onChange={() => onTogglePago(inst.id)}
-                  ariaLabel={inst.pago ? `Marcar ${inst.descricao} como não paga` : `Marcar ${inst.descricao} como paga`}
-                  icon={<Check size={14} />}
-                />
                 <button type="button" className="gc-list-row-main" onClick={() => onEditInstance(inst)}>
                   <span className="gc-list-row-grow">
                     <span className="gc-list-row-title-line">
@@ -4139,7 +4133,6 @@ function App({ session }) {
               instances={expenseInstances} templates={expenseTemplates} categories={expenseCategories}
               cards={cardSettings} competencia={cartaoComp}
               cardFilter={cartaoCardFilter} onCardFilterChange={setCartaoCardFilter}
-              onTogglePago={toggleExpenseInstancePago}
               onEditInstance={(inst) => setInstanceForm({ initial: inst, mode: "cartao" })}
               onOpenSettings={() => setCardSettingsForm(true)}
             />
