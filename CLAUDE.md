@@ -110,6 +110,24 @@ snake_case) estão todas implementadas: `income_sources`/`income_entries`/
   "3/10" na lista de Despesas do mês (`GcDespesas`) no lugar da pill
   genérica "Recorrente" — sobrevivem mesmo se o template for depois
   excluído (instância órfã), porque foram copiados, não referenciados.
+  Ambos ganham também `noCartao` (boolean — paga no cartão de crédito) e
+  `diaCompra` (1–31, opcional, dia em que a cobrança normalmente entra no
+  cartão) — ver `credit_card_settings` abaixo.
+- `credit_card_settings` — coleção **singleton** (um único cartão, sem
+  cadastro de múltiplos): um documento fixo `id: "main"` com
+  `diaFechamento` (1–31, opcional). Junto com `noCartao`/`diaCompra` de
+  `expense_templates`/`expense_instances`, alimenta a tela "Cartão de
+  Crédito" (`GcCartao`, item do hub em "Mais") — uma visão tipo fatura,
+  lista **plana** (não agrupada por categoria, ao contrário de Despesas do
+  mês) de tudo que está marcado como pago no cartão naquele mês, incluindo
+  compras parceladas. Fórmulas puras `gcFaturaCompetencia`/
+  `gcFaturaInstances` (index.html, junto de `gcCustoMes`) decidem em qual
+  mês uma despesa cai na fatura: sem `diaCompra`/`diaFechamento`
+  suficientes, nunca desloca (fica na própria competência); com os dois,
+  uma cobrança feita depois do dia de fechamento entra na fatura do mês
+  seguinte, como um cartão de verdade. As mesmas despesas continuam
+  aparecendo em Despesas do mês — as duas telas coexistem, não são
+  mutuamente exclusivas.
 - `investment_snapshots` — saldo mensal (net worth): `competencia`, `saldo`,
   `observacao`.
 - `wishlist_items` — Lista de Sonhos: `categoria` (texto livre, seed
@@ -162,10 +180,11 @@ reajuste de preço, ex. Disney+ subindo mês a mês).
   (em produção real o `body` ainda rola, mas o efeito visual de
   topbar/nav fixos se perde).
 - Navegação: hub popover no topbar (`.gc-hub-popover`, abre pelo brand) com
-  Dashboard, Despesas, Receitas, Investimentos, Viagens, Lista de Sonhos,
-  Conta + Sair. Rota por estado local: `subTab` (sem react-router). FAB
-  contextual flutuante. Recorrências **não** é item do hub — vive como
-  sub-aba dentro de Despesas (`despesasSub`: `"mes"` | `"recorrencias"`).
+  Dashboard, Despesas, Receitas, Investimentos, Cartão de Crédito, Viagens,
+  Lista de Sonhos, Conta + Sair. Rota por estado local: `subTab` (sem
+  react-router). FAB contextual flutuante. Recorrências **não** é item do
+  hub — vive como sub-aba dentro de Despesas (`despesasSub`: `"mes"` |
+  `"recorrencias"`).
 - Telas: Dashboard (só leitura), Receitas (lista + modal), Despesas
   (`GcDespesasScreen` com TabBar **Deste mês** | **Recorrências** — mês =
   lista agrupada com checkbox "pago"; Recorrências = CRUD de templates),
@@ -232,6 +251,13 @@ reajuste de preço, ex. Disney+ subindo mês a mês).
   cor+orçamento), `GcTripExpenseForm`. Coleções `trips`/`trip_expenses` (ver
   Modelo de dados). Excluir uma viagem apaga os gastos dela junto (única
   coleção do app com esse comportamento — as outras só orfanizam).
+- ~~Cartão de Crédito (fora do plano original — pedido novo, aba própria
+  da planilha de finanças)~~ ✅ feito: `GcCartao` (fatura do mês em lista
+  plana, não agrupada por categoria — parceladas + qualquer despesa
+  avulsa/recorrência marcada `noCartao`), `GcCardSettingsForm` (dia de
+  fechamento). Coleção `credit_card_settings` (singleton) + campos
+  `noCartao`/`diaCompra` em `expense_templates`/`expense_instances` (ver
+  Modelo de dados). Um único cartão suportado (sem cadastro de múltiplos).
 
 ## Próximos passos (pós-plano original, sugestões — confirmar com o Gui)
 - Editar/excluir um lançamento de receita específico (`deleteIncomeEntry` já
@@ -255,11 +281,11 @@ sem esse campo continuam existindo — a tela precisa tratar o valor ausente
 como "falsy"/default (mesmo cuidado de `row.campo || default` que os
 mapeadores `gcRowToX` faziam antes; sem eles agora, quem lê o dado direto do
 Firestore é quem tem essa responsabilidade). Vale a pena manter, aqui, o
-registro do que foi o último campo adicionado — **`parcelado`/`totalParcelas`
-em `expense_templates`, `parcelaAtual`/`totalParcelas` em
-`expense_instances`** (compra parcelada tipo "TV em 10x" — ver Modelo de
-dados). Documentos antigos sem esses campos continuam sem pill de parcela
-na lista de Despesas, sem erro.
+registro do que foi o último campo adicionado — **`noCartao`/`diaCompra`
+em `expense_templates` e `expense_instances`, mais a coleção
+`credit_card_settings`** (aba Cartão de Crédito — ver Modelo de dados).
+Documentos antigos sem esses campos continuam funcionando normalmente em
+Despesas do mês e simplesmente não entram na fatura do cartão, sem erro.
 
 ## Como verificar mudanças
 Abra o `index.html` no navegador — entra direto em modo demo local
@@ -307,6 +333,18 @@ Firebase ser criado).
   (o snapshot mais recente por competência manda, não por ordem de
   cadastro). Toque no FAB — deve abrir "Registrar saldo" pré-preenchido com
   o mês atual e o valor já salvo dele.
+
+- **Cartão de Crédito**: abra "Cartão de Crédito" pela gaveta (seção
+  "Mais") — em modo demo (fechamento dia 20) deve listar "Cartão de
+  crédito" (dia 10) e "Notebook parcelado" (dia 18, com a pill "3/10")
+  na fatura do mês atual, e "Apple One" (dia 22, empurrada pelo
+  fechamento) na fatura do mês seguinte — confirme trocando o mês pelo
+  filtro do topbar. Marque uma despesa como paga (mesmo checkbox de
+  Despesas) e confirme que persiste. Edite o dia de fechamento pelo ícone
+  de engrenagem e confirme que a fatura recalcula (aumentar o fechamento
+  pra além do dia 22 deve trazer o Apple One de volta pra fatura do mês
+  atual). Toque no FAB — deve abrir "Nova despesa avulsa" já com "Pago no
+  cartão?" marcado como Sim.
 
 - **Lista de Sonhos (Fase 4)**: abra Lista de Sonhos pela gaveta — em modo
   demo deve mostrar TECH (R$0,00, os 3 itens sem preço) e MISC (R$1.000,00,
