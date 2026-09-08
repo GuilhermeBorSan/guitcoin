@@ -119,6 +119,14 @@ function gcShiftCompetencia(comp, delta) {
   const d = new Date(y, m - 1 + delta, 1);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 }
+// Diferença em meses entre duas competências "YYYY-MM" (b - a). Usado pra
+// calcular em qual parcela (1-based) uma competência cai dentro de uma
+// recorrência parcelada — ver gcNovaInstanciaDeTemplate.
+function gcCompetenciaDiffMeses(a, b) {
+  const [ay, am] = a.split("-").map(Number);
+  const [by, bm] = b.split("-").map(Number);
+  return (by - ay) * 12 + (bm - am);
+}
 function gcFmtMoney(v) {
   return (v || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 }
@@ -291,14 +299,21 @@ function gcGroupTemplates(templates, categories) {
     .filter(g => g.items.length > 0);
 }
 // Uma instância nova gerada a partir de um template (ainda sem id salvo).
+// Quando o template é parcelado (compra parcelada, ex. "TV em 10x"), grava
+// parcelaAtual/totalParcelas NA instância (copiado, não ao vivo) — assim a
+// numeração sobrevive mesmo se o template for depois excluído (instância
+// órfã, templateId: null).
 function gcNovaInstanciaDeTemplate(t, competencia) {
   const variavel = gcValorTipo(t) === "variavel";
+  const parcelado = !!t.parcelado && t.dataInicio;
   return {
     id: uid(), templateId: t.id, grupo: t.grupo, descricao: t.nome, competencia,
     valor: t.valorPadrao || 0, pago: false,
     valorConfirmado: !variavel,
     compartilhado: !!t.compartilhado, compartilhadoCom: t.compartilhadoCom || "",
     minhaParcelaPct: t.minhaParcelaPct != null ? t.minhaParcelaPct : 100,
+    parcelaAtual: parcelado ? gcCompetenciaDiffMeses(t.dataInicio, competencia) + 1 : null,
+    totalParcelas: parcelado ? (t.totalParcelas || null) : null,
   };
 }
 // Geração LAZY das instâncias que faltam, até `competenciaLimite` (nunca
@@ -1565,7 +1580,9 @@ function GcDespesas({ instances, categories, competencia, onTogglePago, onSaveVa
                       <span className="gc-list-row-grow">
                         <span className="gc-list-row-title-line">
                           <span className="gc-list-row-title">{inst.descricao}</span>
-                          {inst.templateId && (
+                          {inst.totalParcelas ? (
+                            <span className="gc-pill gc-pill-muted" title="Parcela" aria-label={`Parcela ${inst.parcelaAtual} de ${inst.totalParcelas}`}>{inst.parcelaAtual}/{inst.totalParcelas}</span>
+                          ) : inst.templateId && (
                             <span className="gc-pill gc-pill-muted gc-pill-icon" title="Recorrente" aria-label="Recorrente"><Repeat size={11} /></span>
                           )}
                           {pendente && <span className="gc-pill gc-pill-gold">a confirmar</span>}
@@ -1628,6 +1645,10 @@ function GcExpenseInstanceForm({ initial, categories, competencia, onSave, onDel
       pago, compartilhado, compartilhadoCom: compartilhado ? compartilhadoCom : "",
       minhaParcelaPct: compartilhado ? (parseFloat(minhaParcelaPct) || 0) : 100,
       valorConfirmado: true,
+      // Número de parcela é copiado do template no momento da geração, não
+      // editável aqui — só preservar o que já existia.
+      parcelaAtual: (initial && initial.parcelaAtual) || null,
+      totalParcelas: (initial && initial.totalParcelas) || null,
     });
     setBusy(false);
     if (ok !== false) onClose();
@@ -1639,6 +1660,9 @@ function GcExpenseInstanceForm({ initial, categories, competencia, onSave, onDel
         <Field label="Descrição" wide>
           <input value={descricao} onChange={e => setDescricao(e.target.value)} required autoFocus />
         </Field>
+        {initial && initial.totalParcelas && (
+          <p className="lb-hint gc-parcela-hint">Parcela {initial.parcelaAtual} de {initial.totalParcelas} — número definido na recorrência, não editável aqui.</p>
+        )}
         <Field label="Categoria" wide select>
           <select value={grupo} onChange={e => setGrupo(e.target.value)}>
             {categories.map(g => <option key={g.id} value={g.id}>{g.nome}</option>)}
@@ -1728,8 +1752,11 @@ function GcRecorrencias({ templates, categories, onEdit }) {
                         <span>{t.nome}</span>
                       </span>
                       <small className="gc-list-row-sub">
-                        {t.frequencia === "anual" ? `Anual · ${MONTH_LABELS[(t.mesCobranca || 1) - 1]}` : "Mensal"}
-                        {t.dataFim ? " · pausada" : t.ativo === false ? " · inativa" : ""}
+                        {t.parcelado
+                          ? `Parcelado (${t.totalParcelas || "?"}x)`
+                          : t.frequencia === "anual" ? `Anual · ${MONTH_LABELS[(t.mesCobranca || 1) - 1]}` : "Mensal"}
+                        {!t.parcelado && (t.dataFim ? " · pausada" : t.ativo === false ? " · inativa" : "")}
+                        {t.parcelado && t.ativo === false ? " · pausada" : ""}
                         {t.compartilhado ? ` · ${t.minhaParcelaPct}% minha parte` : ""}
                       </small>
                     </span>
@@ -1776,26 +1803,40 @@ function GcExpenseTemplateForm({ initial, categories, onSave, onDelete, onClose 
   const [valorPadrao, setValorPadrao] = useState(initial ? String(initial.valorPadrao) : "");
   const [dataInicio, setDataInicio] = useState(initial ? initial.dataInicio : competenciaAtual());
   const [dataFim, setDataFim] = useState(initial && initial.dataFim ? initial.dataFim : "");
+  const [parcelado, setParcelado] = useState(initial ? !!initial.parcelado : false);
+  const [totalParcelas, setTotalParcelas] = useState(initial && initial.totalParcelas ? String(initial.totalParcelas) : "12");
   const [compartilhado, setCompartilhado] = useState(initial ? initial.compartilhado : false);
   const [compartilhadoCom, setCompartilhadoCom] = useState(initial ? initial.compartilhadoCom : "");
   const [minhaParcelaPct, setMinhaParcelaPct] = useState(initial ? String(initial.minhaParcelaPct) : "100");
   const [ativo, setAtivo] = useState(initial ? initial.ativo : true);
   const [busy, setBusy] = useState(false);
 
+  // Parcelamento força mensal e calcula sozinho até quando gerar (dataFim) —
+  // gcGenerateMissingInstances já para de gerar sozinha nesse mês, sem
+  // precisar de nenhuma mudança no motor de geração.
+  const frequenciaEfetiva = parcelado ? "mensal" : frequencia;
+  const totalParcelasNum = parseInt(totalParcelas, 10) || 0;
+  const dataFimParcelado = parcelado && dataInicio && totalParcelasNum > 0
+    ? gcShiftCompetencia(dataInicio, totalParcelasNum - 1)
+    : "";
+
   const submit = async (e) => {
     e.preventDefault();
     if (!nome.trim() || !dataInicio) return;
+    if (parcelado && totalParcelasNum < 1) return;
     setBusy(true);
     const ok = await onSave({
       id: initial ? initial.id : uid(),
-      nome: nome.trim(), grupo, frequencia,
-      mesCobranca: frequencia === "anual" ? parseInt(mesCobranca, 10) : null,
+      nome: nome.trim(), grupo, frequencia: frequenciaEfetiva,
+      mesCobranca: frequenciaEfetiva === "anual" ? parseInt(mesCobranca, 10) : null,
       diaVencimento: (initial && initial.diaVencimento) || null,
       valorTipo,
       valorPadrao: parseFloat(String(valorPadrao).replace(",", ".")) || 0,
       compartilhado, compartilhadoCom: compartilhado ? compartilhadoCom : "",
       minhaParcelaPct: compartilhado ? (parseFloat(minhaParcelaPct) || 0) : 100,
-      ativo, dataInicio, dataFim: dataFim || null,
+      ativo, dataInicio,
+      parcelado, totalParcelas: parcelado ? totalParcelasNum : null,
+      dataFim: parcelado ? dataFimParcelado : (dataFim || null),
       observacao: (initial && initial.observacao) || "",
     });
     setBusy(false);
@@ -1819,10 +1860,15 @@ function GcExpenseTemplateForm({ initial, categories, onSave, onDelete, onClose 
         <Field label={valorTipo === "variavel" ? "Valor estimado" : "Valor padrão"} wide>
           <input type="number" inputMode="decimal" step="0.01" value={valorPadrao} onChange={e => setValorPadrao(e.target.value)} required />
         </Field>
-        <Field label="Frequência" wide>
-          <Segmented options={[{ value: "mensal", label: "Mensal" }, { value: "anual", label: "Anual (1x/ano)" }]} value={frequencia} onChange={setFrequencia} />
+        <Field label="Compra parcelada?" wide>
+          <Segmented options={[{ value: "nao", label: "Não" }, { value: "sim", label: "Sim (ex.: 10x no cartão)" }]} value={parcelado ? "sim" : "nao"} onChange={v => setParcelado(v === "sim")} />
         </Field>
-        {frequencia === "anual" && (
+        {!parcelado && (
+          <Field label="Frequência" wide>
+            <Segmented options={[{ value: "mensal", label: "Mensal" }, { value: "anual", label: "Anual (1x/ano)" }]} value={frequencia} onChange={setFrequencia} />
+          </Field>
+        )}
+        {!parcelado && frequencia === "anual" && (
           <Field label="Mês de cobrança" wide select>
             <select value={mesCobranca} onChange={e => setMesCobranca(e.target.value)}>
               {MONTH_LABELS.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
@@ -1832,9 +1878,21 @@ function GcExpenseTemplateForm({ initial, categories, onSave, onDelete, onClose 
         <Field label="Começa em">
           <input type="month" value={dataInicio} onChange={e => setDataInicio(e.target.value)} required />
         </Field>
-        <Field label="Termina em (opcional)">
-          <input type="month" value={dataFim} onChange={e => setDataFim(e.target.value)} />
-        </Field>
+        {parcelado ? (
+          <Field label="Quantidade de parcelas">
+            <input type="number" min="1" step="1" value={totalParcelas} onChange={e => setTotalParcelas(e.target.value)} required />
+          </Field>
+        ) : (
+          <Field label="Termina em (opcional)">
+            <input type="month" value={dataFim} onChange={e => setDataFim(e.target.value)} />
+          </Field>
+        )}
+        {parcelado && dataFimParcelado && (
+          <p className="lb-hint gc-parcela-hint">
+            Última parcela ({totalParcelasNum}/{totalParcelasNum}) em {competenciaLabel(dataFimParcelado)}.
+            Reduzir a quantidade depois não apaga parcelas futuras já geradas — é preciso excluí-las manualmente.
+          </p>
+        )}
         <Field label="Dividida com terceiro?" wide>
           <Segmented options={[{ value: "nao", label: "Não" }, { value: "sim", label: "Sim" }]} value={compartilhado ? "sim" : "nao"} onChange={v => setCompartilhado(v === "sim")} />
         </Field>
@@ -3805,6 +3863,7 @@ div.gc-statcard { cursor: default; }
 .gc-conta-fields { display: flex; flex-direction: column; gap: var(--sp-3); }
 .gc-conta-hint { margin: 0; padding: var(--sp-3) var(--sp-1); font-size: 13.5px; }
 .gc-conta-hint-left { margin: -4px 0 0; text-align: left; font-size: 12.5px; }
+.gc-parcela-hint { grid-column: 1 / -1; margin: -4px 0 0; text-align: left; font-size: 12.5px; }
 .gc-conta-taxa-row { display: flex; align-items: center; gap: var(--sp-3); padding: 2px 0; }
 .gc-conta-taxa-label { flex: 1; font-family: 'Space Grotesk', sans-serif; font-weight: 600; font-size: 14px; color: var(--gc-ink); }
 .gc-conta-taxa-pct {

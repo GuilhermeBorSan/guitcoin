@@ -90,15 +90,26 @@ snake_case) estão todas implementadas: `income_sources`/`income_entries`/
   (`casa`|`pessoal`|`pix`|`cartao_fixo`), `frequencia` (`mensal`|`anual`),
   `mesCobranca`, `diaVencimento`, `valorPadrao`, `compartilhado`,
   `compartilhadoCom`, `minhaParcelaPct` (0–100), `ativo`, `dataInicio`,
-  `dataFim`, `observacao`.
+  `dataFim`, `observacao`, `parcelado` (boolean — compra parcelada, ex. "TV
+  em 10x"), `totalParcelas` (só relevante quando `parcelado`). Um template
+  `parcelado` força `frequencia = "mensal"` e tem `dataFim` calculado
+  automaticamente no submit do form (`dataInicio` + `totalParcelas` meses),
+  em vez de digitado à mão — é isso que faz `gcGenerateMissingInstances`
+  parar de gerar sozinho, sem precisar de nenhuma mudança no motor de
+  geração.
 - `expense_instances` — uma linha por template por mês (+ compras avulsas
   sem template): `templateId`, `grupo`, `descricao`, `competencia`,
-  `valor`, `pago`, `compartilhado`, `compartilhadoCom`, `minhaParcelaPct`
-  (campos de divisão copiados do template no momento da geração, não ao
-  vivo). **Custo de vida de uma instância = `valor * minhaParcelaPct /
-  100`** — é assim que uma conta dividida com terceiro (ex.: contas de casa
-  divididas com o Bruno, `minhaParcelaPct = 0`) some do Custo de Vida sem
-  deixar de aparecer na lista com o checkbox de "pago".
+  `valor`, `pago`, `compartilhado`, `compartilhadoCom`, `minhaParcelaPct`,
+  `parcelaAtual`/`totalParcelas` (campos de divisão e de parcela copiados
+  do template no momento da geração, não ao vivo — ver
+  `gcNovaInstanciaDeTemplate`). **Custo de vida de uma instância = `valor *
+  minhaParcelaPct / 100`** — é assim que uma conta dividida com terceiro
+  (ex.: contas de casa divididas com o Bruno, `minhaParcelaPct = 0`) some
+  do Custo de Vida sem deixar de aparecer na lista com o checkbox de
+  "pago". `parcelaAtual`/`totalParcelas` (ex. `3`/`10`) aparecem como pill
+  "3/10" na lista de Despesas do mês (`GcDespesas`) no lugar da pill
+  genérica "Recorrente" — sobrevivem mesmo se o template for depois
+  excluído (instância órfã), porque foram copiados, não referenciados.
 - `investment_snapshots` — saldo mensal (net worth): `competencia`, `saldo`,
   `observacao`.
 - `wishlist_items` — Lista de Sonhos: `categoria` (texto livre, seed
@@ -244,8 +255,11 @@ sem esse campo continuam existindo — a tela precisa tratar o valor ausente
 como "falsy"/default (mesmo cuidado de `row.campo || default` que os
 mapeadores `gcRowToX` faziam antes; sem eles agora, quem lê o dado direto do
 Firestore é quem tem essa responsabilidade). Vale a pena manter, aqui, o
-registro do que foi o último campo adicionado — hoje nenhum ainda, schema
-inicial completo desde a troca de Supabase pra Firebase.
+registro do que foi o último campo adicionado — **`parcelado`/`totalParcelas`
+em `expense_templates`, `parcelaAtual`/`totalParcelas` em
+`expense_instances`** (compra parcelada tipo "TV em 10x" — ver Modelo de
+dados). Documentos antigos sem esses campos continuam sem pill de parcela
+na lista de Despesas, sem erro.
 
 ## Como verificar mudanças
 Abra o `index.html` no navegador — entra direto em modo demo local
