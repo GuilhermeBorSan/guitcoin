@@ -272,17 +272,14 @@ function gcCustoTemplate(template) {
 function gcInstancesForCompetencia(instances, competencia) {
   return instances.filter(i => i.competencia === competencia);
 }
-// Linhas da aba Despesas: exclui tudo que é pago no cartão (compra avulsa
-// OU recorrência tipo assinatura, ex. Apple One) — essas só vivem em
-// Cartão e em Recorrências (a lista de templates, não afetada aqui).
-// Mantém fora-do-cartão e parceladas (seção Parceladas, que soma no Custo
-// via gcValorExibido mesmo sendo noCartao — ver comentário em
-// gcGroupInstances) e lançamentos de fatura.
+// Linhas da aba Despesas: exclui TUDO que é pago no cartão (compra avulsa,
+// recorrência tipo assinatura ou parcelada, ex. Apple One/Notebook 3x) —
+// já aparecem na fatura em Cartão e, se forem recorrência (parcelada
+// inclusive), também em Recorrências (lista de templates, não afetada
+// aqui). Só fica em Despesas do mês o que NÃO é pago no cartão (inclusive
+// parcelada fora do cartão, ex. boleto — segue na seção "Parceladas").
 function gcInstancesDespesas(instances, competencia) {
-  return gcInstancesForCompetencia(instances, competencia).filter(i => {
-    if (!i.noCartao) return true;
-    return !!i.totalParcelas; // parcela → seção Parceladas
-  });
+  return gcInstancesForCompetencia(instances, competencia).filter(i => !i.noCartao);
 }
 function gcMonthInstancesTotal(instances, competencia, cards) {
   return gcInstancesDespesas(instances, competencia).reduce(
@@ -478,9 +475,9 @@ function gcGroupInstances(instances, competencia, categories, cards) {
   if (orfaos.length) {
     grupos.push({ value: "_outros", label: "Outros", items: orfaos, total: sumGrupo(orfaos) });
   }
-  // Seção fixa "Parceladas": só parcelas (Nx), independente da categoria.
-  // Total da seção usa valor exibido (não zera noCartao) — o Meu custo do
-  // mês continua sem duplicar via fatura (gcValorParaTotal / gcCustoInstance).
+  // Seção fixa "Parceladas": só parcelas (Nx) fora do cartão (parcelada no
+  // cartão nem chega em `doMes` — ver gcInstancesDespesas), independente
+  // da categoria.
   if (parceladas.length) {
     const totalParceladas = parceladas.reduce((s, i) => s + gcValorExibido(i, instances, cards), 0);
     grupos.push({ value: "_parceladas", label: "Parceladas", items: parceladas, total: totalParceladas });
@@ -1854,9 +1851,10 @@ function GcDespesas({ instances, categories, cards, competencia, onTogglePago, o
         <button type="button" className="lb-icon-btn gc-despesas-toolbar-cat" onClick={onManageCategories} aria-label="Gerenciar categorias"><Settings size={18} /></button>
       </div>
 
-      {/* Linha fixa: assinaturas/compras no cartão não aparecem mais nesta
-          lista (ficam só em Recorrências/Cartão) — este é o atalho pra
-          lançar o total da fatura sem passar pelo menu do FAB. */}
+      {/* Linha fixa: tudo pago no cartão (avulsa, assinatura ou parcelada)
+          não aparece mais nesta lista (fica só em Cartão/Recorrências) —
+          este é o atalho pra lançar o total da fatura sem passar pelo
+          menu do FAB. */}
       <button type="button" className="gc-fatura-fixed-row" onClick={onOpenFaturaPicker}>
         <CreditCard size={18} />
         <span className="gc-fatura-fixed-row-txt">Fatura do cartão</span>
@@ -1864,7 +1862,7 @@ function GcDespesas({ instances, categories, cards, competencia, onTogglePago, o
       </button>
 
       {grupos.length === 0 ? (
-        <EmptyState icon={<FileText size={40} />} title="Nenhuma despesa neste mês" message="Toque no + pra lançar uma compra avulsa ou recorrência. Parcelas aparecem em Parceladas; tudo pago no cartão (avulso ou assinatura) fica só na aba Cartão/Recorrências — use a linha 'Fatura do cartão' acima pra lançar o total." />
+        <EmptyState icon={<FileText size={40} />} title="Nenhuma despesa neste mês" message="Toque no + pra lançar uma compra avulsa ou recorrência. Tudo pago no cartão (avulso, assinatura ou parcelada) fica só na aba Cartão/Recorrências — use a linha 'Fatura do cartão' acima pra lançar o total." />
       ) : (
         grupos.map(g => (
           <div className="gc-group" key={g.value}>
