@@ -1259,15 +1259,19 @@ function GcReceitas({ sources, entries, ano, onEditSource, onSaveEntryValor }) {
   }, [ano]);
 
   const ate = gcAteCompetenciaDoAno(ano);
+  const ativos = sources.filter(s => s.ativo !== false).slice().sort((a, b) => (a.ordem || 0) - (b.ordem || 0));
+  const ativoIds = new Set(ativos.map(s => s.id));
+  // Filtra por fonte ativa/existente antes de somar: um lançamento cujo
+  // sourceId não corresponde a nenhuma fonte real (ex.: dado de seed/demo
+  // que ficou pra trás, ou fonte apagada) não deve inflar o faturamento —
+  // mesmo cuidado que o acordeão de meses abaixo já tinha.
+  const entriesAtivos = entries.filter(e => ativoIds.has(e.sourceId));
   const rendaFixaAnual = gcRendaFixaAnualGarantida(entries, sources, ano);
   const extraYTD = gcExtraAcumuladoYTD(entries, sources, ano, ate);
   const projecaoTotal = gcProjecaoTotalAno(rendaFixaAnual, extraYTD);
-  const faturamentoYTD = gcFaturamentoYTD(entries, ano, ate);
+  const faturamentoYTD = gcFaturamentoYTD(entriesAtivos, ano, ate);
   const atual = competenciaAtual();
   const meses = gcMonthsOfYear(ano).slice().reverse();
-  const ativos = sources.filter(s => s.ativo !== false).slice().sort((a, b) => (a.ordem || 0) - (b.ordem || 0));
-  const ativoIds = new Set(ativos.map(s => s.id));
-  const entriesAtivos = entries.filter(e => ativoIds.has(e.sourceId));
   // Oculta meses futuros sem lançamento. Meses passados vazios ficam
   // visíveis com aviso; o mês atual também (pra dar pra lançar).
   const mesesVisiveis = meses.filter(comp => {
@@ -2466,8 +2470,13 @@ function GcAreaChart({ items, showValues, janIndex, onClick }) {
   );
 }
 
-function GcDashboard({ incomeEntries, expenseInstances, investmentSnapshots, wishlistItems, ano, onOpenInvestimentos }) {
-  const receitaPorMes = gcReceitaPorMes(incomeEntries, ano);
+function GcDashboard({ incomeSources, incomeEntries, expenseInstances, investmentSnapshots, wishlistItems, ano, onOpenInvestimentos }) {
+  // Mesmo cuidado do GcReceitas: um lançamento cujo sourceId não corresponde
+  // a nenhuma fonte real (fonte apagada, ou dado de seed/demo que ficou pra
+  // trás no Firestore) não deve inflar Faturamento/Receita×Gastos/Fluxo de Caixa.
+  const sourceIds = new Set((incomeSources || []).map(s => s.id));
+  const incomeEntriesValidas = incomeEntries.filter(e => sourceIds.has(e.sourceId));
+  const receitaPorMes = gcReceitaPorMes(incomeEntriesValidas, ano);
   const custoPorMes = gcCustoPorMes(expenseInstances, ano);
   const saldoLiquidoPorMes = gcSaldoLiquidoPorMes(receitaPorMes, custoPorMes);
   const investimentosPorMes = gcInvestimentosPorMes(investmentSnapshots, ano);
@@ -2480,7 +2489,7 @@ function GcDashboard({ incomeEntries, expenseInstances, investmentSnapshots, wis
   const investChartItems = lastChartIdx >= 0
     ? investimentosPorMes.slice(0, lastChartIdx + 1).map((s, i) => ({ label: MONTH_LABELS[i], value: s.total }))
     : [];
-  const faturamentoAnual = gcFaturamentoAnual(incomeEntries, ano);
+  const faturamentoAnual = gcFaturamentoAnual(incomeEntriesValidas, ano);
   const custoDeVidaAnual = gcCustoDeVidaAnual(expenseInstances, ano);
   const taxaDePoupanca = gcTaxaDePoupanca(faturamentoAnual, custoDeVidaAnual);
   const mediaMensalDeGastos = gcMediaMensalDeGastos(custoDeVidaAnual);
@@ -3329,6 +3338,7 @@ function App({ session }) {
             <p className="lb-hint gc-empty">Carregando...</p>
           ) : subTab === "dashboard" ? (
             <GcDashboard
+              incomeSources={incomeSources}
               incomeEntries={incomeEntries} expenseInstances={expenseInstances} investmentSnapshots={investmentSnapshots}
               wishlistItems={wishlistItems}
               ano={dashboardAno}
