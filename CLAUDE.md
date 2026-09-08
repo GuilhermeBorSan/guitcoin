@@ -267,6 +267,23 @@ reajuste de preço, ex. Disney+ subindo mês a mês).
   nem de "X/Y pagas": cartão é só do Gui (sem divisão) e a fatura é paga
   de uma vez só, então esses dois não fazem sentido aqui (diferente de
   Despesas do mês, onde cada linha é um boleto próprio).
+- ~~Recorrência no cartão: escolher da lista em vez de criar do zero~~ ✅
+  feito: o FAB da tela Cartão → "Recorrente" abre
+  `GcCartaoEscolherRecorrencia` — uma lista das recorrências já
+  cadastradas em Despesas → Recorrências (só as que ainda podem gerar
+  cobrança: `!parcelado`, `ativo !== false` e sem `dataFim` já vencido),
+  cada uma com um checkbox que chama `saveExpenseTemplate({...t, noCartao:
+  !t.noCartao})` direto — sem formulário, sem pedir data. Substituiu o
+  fluxo antigo de criar uma recorrência do zero em `mode="cartao"` (que
+  exigia preencher "Data da cobrança" + "Fatura inicial", uma dupla de
+  campos que combinada via `gcCompetenciaDeFatura` confundia fácil — ver
+  histórico de bugs). "Parcelada" no mesmo FAB continua abrindo
+  `GcExpenseTemplateForm` em `mode="cartao"` normalmente (uma compra
+  parcelada é sempre nova, não tem o que "escolher da lista"). O caminho
+  `mode="cartao"` não-parcelado de `GcExpenseTemplateForm` (com os campos
+  "Data da cobrança"/"Fatura inicial") ficou órfão depois dessa mudança —
+  continua no código, mas não é mais alcançado por nenhum botão; limpeza
+  futura, não atrapalha.
 
 ## Próximos passos (pós-plano original, sugestões — confirmar com o Gui)
 - Editar/excluir um lançamento de receita específico (`deleteIncomeEntry` já
