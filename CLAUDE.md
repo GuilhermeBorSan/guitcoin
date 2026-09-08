@@ -113,7 +113,16 @@ snake_case) estão todas implementadas: `income_sources`/`income_entries`/
   Ambos ganham também `noCartao` (boolean — paga no cartão de crédito),
   `diaCompra` (1–31, opcional, dia em que a cobrança normalmente entra no
   cartão) e `cardId` (id de um doc em `credit_card_settings` — obrigatório
-  quando `noCartao`) — ver `credit_card_settings` abaixo.
+  quando `noCartao`) — ver `credit_card_settings` abaixo. **Instância
+  `noCartao` sem `totalParcelas` (compra avulsa OU recorrência tipo
+  assinatura, ex. Apple One) não aparece mais na lista de Despesas do mês
+  (`gcInstancesDespesas`)** — vive só na aba Cartão (fatura) e, se for
+  recorrência, também em Recorrências (lista de templates, não afetada por
+  esse filtro). Só `totalParcelas` (parcelada) continua aparecendo em
+  Despesas do mês, na seção fixa "Parceladas". `GcDespesas` tem uma linha
+  fixa "Fatura do cartão" (acima da lista, sempre visível) que abre direto
+  o `GcDespesasFaturaPicker` — atalho pro mesmo fluxo que já existia no
+  menu do FAB ("Fatura do cartão"), sem precisar abrir o FAB.
 - `credit_card_settings` — um documento por cartão (`id`, `nome`,
   `diaFechamento` 1–31 opcional, `ordem`). CRUD via `GcCardsManager`/
   `GcCardForm` (engrenagem na tela Cartão). Excluir bloqueia se ainda houver
@@ -342,7 +351,11 @@ Firebase ser criado).
   menor exatamente pelo valor das 4 contas do Bruno. Marque uma despesa
   como paga (checkbox inline) e confirme que persiste ao trocar de mês e
   voltar. Toque numa linha pra editar; FAB na aba do mês abre menu
-  "Despesa avulsa" / "Nova recorrência". Troque pra **Recorrências** —
+  "Despesa avulsa" / "Nova recorrência". Confirme que as assinaturas pagas
+  no cartão (Apple One, Disney+, etc.) **não aparecem** nessa lista — só
+  em Cartão de Crédito e em Recorrências — e que existe uma linha fixa
+  dourada "Fatura do cartão" acima da lista, que abre direto o seletor de
+  cartão/fatura (mesmo fluxo do FAB "Fatura do cartão"). Troque pra **Recorrências** —
   filtro de mês some; deve listar as 17 recorrências de demo (com
   "Anual · <mês>", "pausada" na Cerâmica, "0% minha parte" nas contas de
   Casa); FAB abre direto o formulário de nova recorrência (campo "Mês de
