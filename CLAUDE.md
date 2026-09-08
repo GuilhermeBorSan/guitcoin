@@ -110,24 +110,22 @@ snake_case) estão todas implementadas: `income_sources`/`income_entries`/
   "3/10" na lista de Despesas do mês (`GcDespesas`) no lugar da pill
   genérica "Recorrente" — sobrevivem mesmo se o template for depois
   excluído (instância órfã), porque foram copiados, não referenciados.
-  Ambos ganham também `noCartao` (boolean — paga no cartão de crédito) e
+  Ambos ganham também `noCartao` (boolean — paga no cartão de crédito),
   `diaCompra` (1–31, opcional, dia em que a cobrança normalmente entra no
-  cartão) — ver `credit_card_settings` abaixo.
-- `credit_card_settings` — coleção **singleton** (um único cartão, sem
-  cadastro de múltiplos): um documento fixo `id: "main"` com
-  `diaFechamento` (1–31, opcional). Junto com `noCartao`/`diaCompra` de
-  `expense_templates`/`expense_instances`, alimenta a tela "Cartão de
-  Crédito" (`GcCartao`, item do hub em "Mais") — uma visão tipo fatura,
-  lista **plana** (não agrupada por categoria, ao contrário de Despesas do
-  mês) de tudo que está marcado como pago no cartão naquele mês, incluindo
-  compras parceladas. Fórmulas puras `gcFaturaCompetencia`/
-  `gcFaturaInstances` (index.html, junto de `gcCustoMes`) decidem em qual
-  mês uma despesa cai na fatura: sem `diaCompra`/`diaFechamento`
-  suficientes, nunca desloca (fica na própria competência); com os dois,
-  uma cobrança feita depois do dia de fechamento entra na fatura do mês
-  seguinte, como um cartão de verdade. As mesmas despesas continuam
-  aparecendo em Despesas do mês — as duas telas coexistem, não são
-  mutuamente exclusivas.
+  cartão) e `cardId` (id de um doc em `credit_card_settings` — obrigatório
+  quando `noCartao`) — ver `credit_card_settings` abaixo.
+- `credit_card_settings` — um documento por cartão (`id`, `nome`,
+  `diaFechamento` 1–31 opcional, `ordem`). CRUD via `GcCardsManager`/
+  `GcCardForm` (engrenagem na tela Cartão). Excluir bloqueia se ainda houver
+  template/instância com aquele `cardId`. Junto com `noCartao`/`diaCompra`/
+  `cardId` de `expense_templates`/`expense_instances`, alimenta a tela
+  "Cartão de Crédito" (`GcCartao`) — abas por cartão + **Todos**, lista
+  **plana** (não agrupada por categoria) do que cai na fatura daquele mês.
+  Fórmulas puras `gcFaturaCompetencia`/`gcFaturaInstances` (cada linha usa
+  o `diaFechamento` do **seu** `cardId`): sem `diaCompra`/`diaFechamento`
+  suficientes, nunca desloca; com os dois, cobrança depois do fechamento
+  entra na fatura do mês seguinte. As mesmas despesas continuam em
+  Despesas do mês — as duas telas coexistem.
 - `investment_snapshots` — saldo mensal (net worth): `competencia`, `saldo`,
   `observacao`.
 - `wishlist_items` — Lista de Sonhos: `categoria` (texto livre, seed
@@ -253,20 +251,14 @@ reajuste de preço, ex. Disney+ subindo mês a mês).
   coleção do app com esse comportamento — as outras só orfanizam).
 - ~~Cartão de Crédito (fora do plano original — pedido novo, aba própria
   da planilha de finanças)~~ ✅ feito: `GcCartao` (fatura do mês em lista
-  plana, não agrupada por categoria — parceladas + qualquer despesa
-  avulsa/recorrência marcada `noCartao`), `GcCardSettingsForm` (dia de
-  fechamento). Coleção `credit_card_settings` (singleton) + campos
-  `noCartao`/`diaCompra` em `expense_templates`/`expense_instances` (ver
-  Modelo de dados). Um único cartão suportado (sem cadastro de múltiplos).
-  Item do hub na linha principal (ao lado de Investimentos), não em
-  "Mais". Statcards são **Total da fatura** / **Parcelas em aberto**
-  (`gcParcelasEmAberto`, quanto falta pagar de parcelamentos ativos a
-  partir de hoje) / **Projeção próximo mês** (`gcProjecaoProximaFatura`,
-  estimativa a partir dos templates ativos "no cartão", já que o mês
-  seguinte ainda não foi gerado) — **sem** card de "custo após divisão"
-  nem de "X/Y pagas": cartão é só do Gui (sem divisão) e a fatura é paga
-  de uma vez só, então esses dois não fazem sentido aqui (diferente de
-  Despesas do mês, onde cada linha é um boleto próprio).
+  plana, abas por cartão + Todos), `GcCardsManager`/`GcCardForm` (CRUD de
+  cartões). Coleção `credit_card_settings` (vários docs) + campos
+  `noCartao`/`diaCompra`/`cardId` em `expense_templates`/`expense_instances`
+  (ver Modelo de dados). Demo: Nubank + BTG. Item do hub na linha principal
+  (ao lado de Investimentos). Statcards **Total da fatura** / **Parcelas em
+  aberto** / **Projeção próximo mês** — filtrados pela aba ativa; na aba de
+  um cartão, o meio vira **Dias até o fechamento** (só em **Todos** fica
+  Parcelas em aberto); **sem** card de "custo após divisão" nem de "X/Y pagas".
 
 ## Próximos passos (pós-plano original, sugestões — confirmar com o Gui)
 - Editar/excluir um lançamento de receita específico (`deleteIncomeEntry` já
@@ -290,11 +282,11 @@ sem esse campo continuam existindo — a tela precisa tratar o valor ausente
 como "falsy"/default (mesmo cuidado de `row.campo || default` que os
 mapeadores `gcRowToX` faziam antes; sem eles agora, quem lê o dado direto do
 Firestore é quem tem essa responsabilidade). Vale a pena manter, aqui, o
-registro do que foi o último campo adicionado — **`noCartao`/`diaCompra`
-em `expense_templates` e `expense_instances`, mais a coleção
-`credit_card_settings`** (aba Cartão de Crédito — ver Modelo de dados).
-Documentos antigos sem esses campos continuam funcionando normalmente em
-Despesas do mês e simplesmente não entram na fatura do cartão, sem erro.
+registro do que foi o último campo adicionado — **`cardId` em
+`expense_templates`/`expense_instances`, e `credit_card_settings` deixou de
+ser singleton** (vários cartões com `nome`/`diaFechamento`/`ordem`; doc
+legado `id: "main"` sem nome vira "Cartão" na UI). Documentos antigos
+`noCartao` sem `cardId` aparecem só na aba **Todos** até serem editados.
 
 ## Como verificar mudanças
 Abra o `index.html` no navegador — entra direto em modo demo local
@@ -343,21 +335,14 @@ Firebase ser criado).
   cadastro). Toque no FAB — deve abrir "Registrar saldo" pré-preenchido com
   o mês atual e o valor já salvo dele.
 
-- **Cartão de Crédito**: abra "Cartão de Crédito" pelo hub (linha
-  principal, ao lado de Investimentos) — em modo demo (fechamento dia 20)
-  deve listar "Cartão de crédito" (dia 10) e "Notebook parcelado" (dia 18,
-  com a pill "3/10") na fatura do mês atual, e "Apple One" (dia 22,
-  empurrada pelo fechamento) na fatura do mês seguinte — confirme
-  trocando o mês pelo filtro do topbar. Confira os statcards: "Parcelas em
-  aberto" deve mostrar o total ainda a pagar do Notebook parcelado (7
-  parcelas restantes × R$349,90, a partir da parcela atual) e "Projeção
-  próximo mês" deve somar os `valorPadrao` das recorrências ativas "no
-  cartão" (Cartão de crédito + Notebook parcelado + Apple One). Marque uma
-  despesa como paga (mesmo checkbox de Despesas) e confirme que persiste.
-  Edite o dia de fechamento pelo ícone de engrenagem e confirme que a
-  fatura recalcula (aumentar o fechamento pra além do dia 22 deve trazer o
-  Apple One de volta pra fatura do mês atual). Toque no FAB — deve abrir
-  "Nova despesa avulsa" já com "Pago no cartão?" marcado como Sim.
+- **Cartão de Crédito**: abra "Cartão de Crédito" pelo hub — abas Nubank |
+  BTG | Todos. Em Nubank (fechamento dia 20): "Cartão de crédito" (dia 10)
+  e "Notebook parcelado" (dia 18, pill "3/10") na fatura do mês atual;
+  "Apple One" (dia 22) na fatura do mês seguinte. Em BTG (fechamento dia
+  10): "Anuidade BTG" (dia 5). Em Todos: as duas + nome do cartão no
+  subtítulo. Engrenagem abre CRUD de cartões; excluir cartão com despesas
+  deve bloquear. FAB na aba BTG pré-seleciona BTG no form (dá pra trocar).
+  Em Despesas, "Pago no cartão?" = Sim exige escolher o cartão.
 
 - **Lista de Sonhos (Fase 4)**: abra Lista de Sonhos pela gaveta — em modo
   demo deve mostrar TECH (R$0,00, os 3 itens sem preço) e MISC (R$1.000,00,
