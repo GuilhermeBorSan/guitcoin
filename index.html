@@ -1081,9 +1081,23 @@ function useGcData(session) {
   };
 
   const saveExpenseTemplate = async (t) => {
-    setExpenseTemplates(prev => prev.some(x => x.id === t.id) ? prev.map(x => x.id === t.id ? t : x) : [...prev, t]);
+    const templatesNext = expenseTemplates.some(x => x.id === t.id)
+      ? expenseTemplates.map(x => x.id === t.id ? t : x)
+      : [...expenseTemplates, t];
+    setExpenseTemplates(templatesNext);
+    // Gera instâncias na hora (local e produção): sem isso, recorrente/
+    // parcelada criada pelo Cartão some da fatura até o próximo loadData —
+    // e no modo demo o reload ainda reinicia o seed, então "nunca" aparece.
+    const novas = gcGenerateMissingInstances(templatesNext, expenseInstances, competenciaAtual());
+    if (novas.length) {
+      setExpenseInstances(prev => [...prev, ...novas.filter(n => !prev.some(p => p.id === n.id))]);
+    }
     if (GC_IS_LOCAL) return true;
-    try { await gcUpsertOne(session, "expense_templates", t); return true; }
+    try {
+      await gcUpsertOne(session, "expense_templates", t);
+      if (novas.length) await gcUpsertMany(session, "expense_instances", novas);
+      return true;
+    }
     catch (err) { console.error(err); setError(gcWriteErrorMsg(err, "salvar a recorrência")); await loadData(); return false; }
   };
 
