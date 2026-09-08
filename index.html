@@ -1081,6 +1081,7 @@ function useGcData(session) {
   };
 
   const saveExpenseTemplate = async (t) => {
+    const anterior = expenseTemplates.find(x => x.id === t.id) || null;
     const templatesNext = expenseTemplates.some(x => x.id === t.id)
       ? expenseTemplates.map(x => x.id === t.id ? t : x)
       : [...expenseTemplates, t];
@@ -1089,13 +1090,34 @@ function useGcData(session) {
     // parcelada criada pelo Cartão some da fatura até o próximo loadData —
     // e no modo demo o reload ainda reinicia o seed, então "nunca" aparece.
     const novas = gcGenerateMissingInstances(templatesNext, expenseInstances, competenciaAtual());
-    if (novas.length) {
-      setExpenseInstances(prev => [...prev, ...novas.filter(n => !prev.some(p => p.id === n.id))]);
+
+    // Editar "Pago no cartão?"/dia da cobrança num template já existente
+    // não deve deixar "congeladas" as instâncias já geradas do mês atual
+    // em diante (mês passado é histórico, nunca mexe) — outros campos
+    // copiados (valorPadrao/compartilhado/minhaParcelaPct) continuam
+    // intencionalmente congelados por design, ver CLAUDE.md.
+    const mudouCartao = anterior && (anterior.noCartao !== t.noCartao || anterior.diaCompra !== t.diaCompra);
+    const paraAtualizar = mudouCartao
+      ? expenseInstances.filter(i => i.templateId === t.id && i.competencia >= competenciaAtual())
+      : [];
+    const idsAfetados = new Set(paraAtualizar.map(i => i.id));
+
+    if (novas.length || idsAfetados.size) {
+      setExpenseInstances(prev => {
+        const comNovas = novas.length ? [...prev, ...novas.filter(n => !prev.some(p => p.id === n.id))] : prev;
+        return idsAfetados.size
+          ? comNovas.map(i => idsAfetados.has(i.id) ? { ...i, noCartao: t.noCartao, diaCompra: t.diaCompra } : i)
+          : comNovas;
+      });
     }
+
     if (GC_IS_LOCAL) return true;
     try {
       await gcUpsertOne(session, "expense_templates", t);
       if (novas.length) await gcUpsertMany(session, "expense_instances", novas);
+      if (paraAtualizar.length) {
+        await Promise.all(paraAtualizar.map(i => gcUpdateFields(session, "expense_instances", i.id, { noCartao: t.noCartao, diaCompra: t.diaCompra })));
+      }
       return true;
     }
     catch (err) { console.error(err); setError(gcWriteErrorMsg(err, "salvar a recorrência")); await loadData(); return false; }
@@ -1466,7 +1488,7 @@ function GcReceitas({ sources, entries, ano, onEditSource, onSaveEntryValor }) {
                             <span className="gc-list-row-title">{source.nome}</span>
                           </button>
                           <input
-                            type="number" inputMode="decimal" step="0.01" placeholder="0,00"
+                            type="text" inputMode="decimal" placeholder="0,00"
                             className="gc-row-valor gc-money"
                             defaultValue={entry ? entry.valor : ""}
                             key={comp + source.id + (entry ? entry.id : "novo")}
@@ -1531,7 +1553,7 @@ function GcIncomeSourceForm({ initial, defaultCompetencia, onSave, onDelete, onC
               <input type="month" value={competencia} onChange={e => setCompetencia(e.target.value)} required />
             </Field>
             <Field label="Valor">
-              <input type="number" inputMode="decimal" step="0.01" value={valor} onChange={e => setValor(e.target.value)} placeholder="0,00" />
+              <input type="text" inputMode="decimal" value={valor} onChange={e => setValor(e.target.value)} placeholder="0,00" />
             </Field>
           </>
         )}
@@ -1578,7 +1600,7 @@ function GcIncomeProjectionForm({ ano, initial, onSave, onClose }) {
     <Modal title={`Projeção ${ano}`} onClose={onClose}>
       <form onSubmit={submit} className="lb-form-grid">
         <Field label="Renda fixa mensal esperada" wide>
-          <input type="number" inputMode="decimal" step="0.01" value={valor} onChange={e => setValor(e.target.value)} autoFocus required />
+          <input type="text" inputMode="decimal" value={valor} onChange={e => setValor(e.target.value)} autoFocus required />
         </Field>
         <div className="lb-form-footer">
           <div className="lb-form-actions">
@@ -1702,7 +1724,7 @@ function GcDespesas({ instances, categories, competencia, onTogglePago, onSaveVa
                     </button>
                     {pendente ? (
                       <input
-                        type="number" inputMode="decimal" step="0.01" placeholder="0,00"
+                        type="text" inputMode="decimal" placeholder="0,00"
                         className="gc-row-valor gc-row-valor-estimado gc-money"
                         defaultValue={inst.valor}
                         key={inst.id + "-est-" + inst.valor}
@@ -1809,7 +1831,7 @@ function GcExpenseInstanceForm({ initial, categories, competencia, defaultNoCart
           </select>
         </Field>
         <Field label="Valor">
-          <input type="number" inputMode="decimal" step="0.01" value={valor} onChange={e => setValor(e.target.value)} required />
+          <input type="text" inputMode="decimal" value={valor} onChange={e => setValor(e.target.value)} required />
         </Field>
         {isCartao ? (
           <>
@@ -2056,7 +2078,7 @@ function GcExpenseTemplateForm({ initial, categories, mode, defaultParcelado, de
           <Segmented options={[{ value: "fixo", label: "Fixo" }, { value: "variavel", label: "Variável" }]} value={valorTipo} onChange={setValorTipo} />
         </Field>
         <Field label={valorTipo === "variavel" ? "Valor estimado" : (parceladoFinal ? "Valor da parcela" : "Valor padrão")} wide>
-          <input type="number" inputMode="decimal" step="0.01" value={valorPadrao} onChange={e => setValorPadrao(e.target.value)} required />
+          <input type="text" inputMode="decimal" value={valorPadrao} onChange={e => setValorPadrao(e.target.value)} required />
         </Field>
         {!isCartao && (
           <Field label="Compra parcelada?" wide>
@@ -2452,7 +2474,7 @@ function GcInvestmentSnapshotForm({ initialCompetencia, snapshots, onSave, onDel
           <input type="month" value={competencia} onChange={e => setCompetencia(e.target.value)} required />
         </Field>
         <Field label="Saldo">
-          <input type="number" inputMode="decimal" step="0.01" value={saldo} onChange={e => setSaldo(e.target.value)} required autoFocus />
+          <input type="text" inputMode="decimal" value={saldo} onChange={e => setSaldo(e.target.value)} required autoFocus />
         </Field>
         <div className="lb-form-footer">
           <div className="lb-form-actions">
@@ -2609,7 +2631,7 @@ function GcWishlistSavingsSnapshotForm({ initialCompetencia, snapshots, onSave, 
           <input type="month" value={competencia} onChange={e => setCompetencia(e.target.value)} required />
         </Field>
         <Field label="Saldo">
-          <input type="number" inputMode="decimal" step="0.01" value={saldo} onChange={e => setSaldo(e.target.value)} required autoFocus />
+          <input type="text" inputMode="decimal" value={saldo} onChange={e => setSaldo(e.target.value)} required autoFocus />
         </Field>
         <div className="lb-form-footer">
           <div className="lb-form-actions">
@@ -2674,7 +2696,7 @@ function GcWishlistItemForm({ initial, onSave, onDelete, onClose }) {
           </datalist>
         </Field>
         <Field label="Preço (opcional)">
-          <input type="number" inputMode="decimal" step="0.01" value={preco} onChange={e => setPreco(e.target.value)} />
+          <input type="text" inputMode="decimal" value={preco} onChange={e => setPreco(e.target.value)} />
         </Field>
         <Field label="Marca">
           <input value={marca} onChange={e => setMarca(e.target.value)} />
@@ -3045,7 +3067,7 @@ function GcConta({
       <div className="gc-conta-fields">
         <Field label="Total da conta" wide>
           <input
-            type="number" inputMode="decimal" step="0.01" min="0"
+            type="text" inputMode="decimal" min="0"
             value={totalManual}
             onChange={e => setTotalManual(e.target.value)}
             disabled={temItens}
@@ -3064,7 +3086,7 @@ function GcConta({
           <span className="gc-conta-taxa-label">Taxa de serviço</span>
           <input
             className="gc-conta-taxa-pct"
-            type="number" inputMode="decimal" step="0.1" min="0"
+            type="text" inputMode="decimal" min="0"
             value={taxaPct}
             onChange={e => setTaxaPct(e.target.value)}
             disabled={!comTaxa}
@@ -3139,7 +3161,7 @@ function GcContaItemForm({ initial, onSave, onDelete, onClose }) {
           <input value={nome} onChange={e => setNome(e.target.value)} placeholder="Ex.: chopp, burger" autoFocus />
         </Field>
         <Field label="Valor" wide>
-          <input type="number" inputMode="decimal" step="0.01" min="0" value={valor} onChange={e => setValor(e.target.value)} required />
+          <input type="text" inputMode="decimal" min="0" value={valor} onChange={e => setValor(e.target.value)} required />
         </Field>
         <div className="lb-form-footer">
           <div className="lb-form-actions">
@@ -3369,7 +3391,7 @@ function GcTripForm({ initial, onSave, onDelete, onClose }) {
                 />
                 <input placeholder="Nome" value={p.nome} onChange={e => updateParticipante(p.id, "nome", e.target.value)} />
                 <input
-                  type="number" inputMode="decimal" step="0.01" placeholder="Disponível"
+                  type="text" inputMode="decimal" placeholder="Disponível"
                   value={p.disponivel} onChange={e => updateParticipante(p.id, "disponivel", e.target.value)}
                 />
                 {participantes.length > 1 && (
@@ -3450,7 +3472,7 @@ function GcTripExpenseForm({ initial, tripId, dia, numDias, existingCategorias, 
           </select>
         </Field>
         <Field label="Valor">
-          <input type="number" inputMode="decimal" step="0.01" min="0" value={valor} onChange={e => setValor(e.target.value)} required />
+          <input type="text" inputMode="decimal" min="0" value={valor} onChange={e => setValor(e.target.value)} required />
         </Field>
         <Field label="Pago por" wide select>
           <select value={pagoPorId} onChange={e => setPagoPorId(e.target.value)}>
