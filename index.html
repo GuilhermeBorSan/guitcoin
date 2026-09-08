@@ -272,16 +272,14 @@ function gcCustoTemplate(template) {
 function gcInstancesForCompetencia(instances, competencia) {
   return instances.filter(i => i.competencia === competencia);
 }
-// Linhas da aba Despesas: exclui compras avulsas no cartão (vivem só em
-// Cartão). Mantém fora-do-cartão, recorrências no cartão (chip), parceladas
-// (seção Parceladas) e lançamentos de fatura.
+// Linhas da aba Despesas: exclui TUDO que é pago no cartão (compra avulsa,
+// recorrência tipo assinatura ou parcelada, ex. Apple One/Notebook 3x) —
+// já aparecem na fatura em Cartão e, se forem recorrência (parcelada
+// inclusive), também em Recorrências (lista de templates, não afetada
+// aqui). Só fica em Despesas do mês o que NÃO é pago no cartão (inclusive
+// parcelada fora do cartão, ex. boleto — segue na seção "Parceladas").
 function gcInstancesDespesas(instances, competencia) {
-  return gcInstancesForCompetencia(instances, competencia).filter(i => {
-    if (!i.noCartao) return true;
-    if (i.totalParcelas) return true; // parcela → seção Parceladas
-    // Recorrência no cartão (ex.: Apple One): mostra com chip.
-    return !!(i.templateId && !i.totalParcelas);
-  });
+  return gcInstancesForCompetencia(instances, competencia).filter(i => !i.noCartao);
 }
 function gcMonthInstancesTotal(instances, competencia, cards) {
   return gcInstancesDespesas(instances, competencia).reduce(
@@ -477,9 +475,9 @@ function gcGroupInstances(instances, competencia, categories, cards) {
   if (orfaos.length) {
     grupos.push({ value: "_outros", label: "Outros", items: orfaos, total: sumGrupo(orfaos) });
   }
-  // Seção fixa "Parceladas": só parcelas (Nx), independente da categoria.
-  // Total da seção usa valor exibido (não zera noCartao) — o Meu custo do
-  // mês continua sem duplicar via fatura (gcValorParaTotal / gcCustoInstance).
+  // Seção fixa "Parceladas": só parcelas (Nx) fora do cartão (parcelada no
+  // cartão nem chega em `doMes` — ver gcInstancesDespesas), independente
+  // da categoria.
   if (parceladas.length) {
     const totalParceladas = parceladas.reduce((s, i) => s + gcValorExibido(i, instances, cards), 0);
     grupos.push({ value: "_parceladas", label: "Parceladas", items: parceladas, total: totalParceladas });
@@ -1790,7 +1788,7 @@ function GcIncomeProjectionForm({ ano, initial, onSave, onClose }) {
 function GcDespesasScreen({
   despesasSub, onDespesasSubChange,
   instances, templates, categories, cards, competencia,
-  onTogglePago, onSaveValor, onEditInstance, onManageCategories, onEditTemplate,
+  onTogglePago, onSaveValor, onEditInstance, onManageCategories, onEditTemplate, onOpenFaturaPicker,
 }) {
   const ano = parseInt(String(competencia || "").slice(0, 4), 10) || new Date().getFullYear();
   const custoPorMes = gcCustoPorMes(instances, ano, cards);
@@ -1811,19 +1809,20 @@ function GcDespesasScreen({
         ariaLabel="Sub-abas de Despesas"
       />
       {despesasSub === "recorrencias" ? (
-        <GcRecorrencias templates={templates} categories={categories} onEdit={onEditTemplate} />
+        <GcRecorrencias templates={templates} categories={categories} onEdit={onEditTemplate} onManageCategories={onManageCategories} />
       ) : (
         <GcDespesas
           instances={instances} categories={categories} cards={cards} competencia={competencia}
           onTogglePago={onTogglePago} onSaveValor={onSaveValor}
           onEditInstance={onEditInstance} onManageCategories={onManageCategories}
+          onOpenFaturaPicker={onOpenFaturaPicker}
         />
       )}
     </div>
   );
 }
 
-function GcDespesas({ instances, categories, cards, competencia, onTogglePago, onSaveValor, onEditInstance, onManageCategories }) {
+function GcDespesas({ instances, categories, cards, competencia, onTogglePago, onSaveValor, onEditInstance, onManageCategories, onOpenFaturaPicker }) {
   const grupos = gcGroupInstances(instances, competencia, categories, cards);
   const totalMes = gcMonthInstancesTotal(instances, competencia, cards);
   const custoMes = gcCustoMes(instances, competencia, cards);
@@ -1852,8 +1851,18 @@ function GcDespesas({ instances, categories, cards, competencia, onTogglePago, o
         <button type="button" className="lb-icon-btn gc-despesas-toolbar-cat" onClick={onManageCategories} aria-label="Gerenciar categorias"><Settings size={18} /></button>
       </div>
 
+      {/* Linha fixa: tudo pago no cartão (avulsa, assinatura ou parcelada)
+          não aparece mais nesta lista (fica só em Cartão/Recorrências) —
+          este é o atalho pra lançar o total da fatura sem passar pelo
+          menu do FAB. */}
+      <button type="button" className="gc-fatura-fixed-row" onClick={onOpenFaturaPicker}>
+        <CreditCard size={18} />
+        <span className="gc-fatura-fixed-row-txt">Fatura do cartão</span>
+        <ChevronRight size={18} />
+      </button>
+
       {grupos.length === 0 ? (
-        <EmptyState icon={<FileText size={40} />} title="Nenhuma despesa neste mês" message="Toque no + pra lançar uma compra avulsa, recorrência ou fatura do cartão. Parcelas aparecem em Parceladas; avulsas no cartão ficam só na aba Cartão." />
+        <EmptyState icon={<FileText size={40} />} title="Nenhuma despesa neste mês" message="Toque no + pra lançar uma compra avulsa ou recorrência. Tudo pago no cartão (avulso, assinatura ou parcelada) fica só na aba Cartão/Recorrências — use a linha 'Fatura do cartão' acima pra lançar o total." />
       ) : (
         grupos.map(g => (
           <div className="gc-group" key={g.value}>
@@ -2309,7 +2318,7 @@ function GcDespesasFaturaPicker({ instances, cards, categories, defaultCompetenc
    CONTEÚDO: RECORRÊNCIAS — templates que geram instâncias em Despesas
    (ver gcGenerateMissingInstances). Renderizado como sub-aba de Despesas.
 ----------------------------------------------------------------*/
-function GcRecorrencias({ templates, categories, onEdit }) {
+function GcRecorrencias({ templates, categories, onEdit, onManageCategories }) {
   const grupos = gcGroupTemplates(templates, categories);
   const orfaos = templates.filter(t => !(categories || []).some(c => c.id === t.grupo));
   const orfaosTotal = orfaos.reduce((s, t) => s + (t.valorPadrao || 0), 0);
@@ -2318,6 +2327,13 @@ function GcRecorrencias({ templates, categories, onEdit }) {
   const custoGeral = grupos.reduce((s, g) => s + g.custo, 0) + orfaosCusto;
   return (
     <>
+      {/* Mesmo modal de categorias da aba "Deste mês" (GcManageCategoriesModal
+          — já suporta reordenar via onReorder/reorderExpenseCategories):
+          categorias são compartilhadas entre as duas sub-abas, então a
+          ordem mudada aqui também vale lá. */}
+      <div className="gc-despesas-toolbar">
+        <button type="button" className="lb-icon-btn gc-despesas-toolbar-cat" onClick={onManageCategories} aria-label="Gerenciar categorias e ordem das subseções"><Settings size={18} /></button>
+      </div>
       {templates.length === 0 ? (
         <EmptyState icon={<Repeat size={40} />} title="Nenhuma recorrência" message="Toque no + pra cadastrar uma conta fixa, assinatura ou cobrança anual." />
       ) : (
@@ -4433,6 +4449,7 @@ function App({ session }) {
               })}
               onManageCategories={() => setCategoriesModal(true)}
               onEditTemplate={(t) => setTemplateForm({ initial: t })}
+              onOpenFaturaPicker={() => setDespesasFaturaPicker(true)}
             />
           ) : subTab === "investimentos" ? (
             <GcInvestimentos snapshots={investmentSnapshots} onEdit={(comp) => setSnapshotForm({ initialCompetencia: comp })} />
@@ -4980,6 +4997,15 @@ div.gc-statcard { cursor: default; }
 
 .gc-group { display: flex; flex-direction: column; gap: var(--sp-2); }
 .gc-group-header { display: flex; align-items: center; justify-content: space-between; padding: 0 var(--sp-1); font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 12px; text-transform: uppercase; letter-spacing: .4px; color: var(--gc-ink-soft); }
+
+.gc-fatura-fixed-row {
+  display: flex; align-items: center; gap: var(--sp-3); width: 100%;
+  padding: var(--sp-3) var(--sp-4); border: 1px dashed var(--gc-gold);
+  border-radius: var(--radius-md); background: color-mix(in srgb, var(--gc-gold) 10%, transparent);
+  color: var(--gc-gold); cursor: pointer; font: inherit; text-align: left;
+}
+.gc-fatura-fixed-row:hover { background: color-mix(in srgb, var(--gc-gold) 16%, transparent); }
+.gc-fatura-fixed-row-txt { flex: 1; font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 14.5px; }
 
 .gc-conta-fields { display: flex; flex-direction: column; gap: var(--sp-3); }
 .gc-conta-hint { margin: 0; padding: var(--sp-3) var(--sp-1); font-size: 13.5px; }

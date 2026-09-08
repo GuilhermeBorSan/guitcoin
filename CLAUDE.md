@@ -113,7 +113,18 @@ snake_case) estão todas implementadas: `income_sources`/`income_entries`/
   Ambos ganham também `noCartao` (boolean — paga no cartão de crédito),
   `diaCompra` (1–31, opcional, dia em que a cobrança normalmente entra no
   cartão) e `cardId` (id de um doc em `credit_card_settings` — obrigatório
-  quando `noCartao`) — ver `credit_card_settings` abaixo.
+  quando `noCartao`) — ver `credit_card_settings` abaixo. **Qualquer
+  instância `noCartao` (compra avulsa, recorrência tipo assinatura ex.
+  Apple One, OU parcelada ex. Notebook 3x) não aparece mais na lista de
+  Despesas do mês (`gcInstancesDespesas` filtra `!i.noCartao`, sem exceção
+  pra parcelada)** — vive só na aba Cartão (fatura, com a pill "3/10" pra
+  parcela) e, se for recorrência (parcelada inclusive), também em
+  Recorrências (lista de templates, não afetada por esse filtro). A seção
+  fixa "Parceladas" em Despesas do mês só mostra parcelada **fora** do
+  cartão (ex. boleto). `GcDespesas` tem uma linha fixa "Fatura do cartão"
+  (acima da lista, sempre visível) que abre direto o
+  `GcDespesasFaturaPicker` — atalho pro mesmo fluxo que já existia no menu
+  do FAB ("Fatura do cartão"), sem precisar abrir o FAB.
 - `credit_card_settings` — um documento por cartão (`id`, `nome`,
   `diaFechamento` 1–31 opcional, `ordem`). CRUD via `GcCardsManager`/
   `GcCardForm` (engrenagem na tela Cartão). Excluir bloqueia se ainda houver
@@ -235,7 +246,11 @@ retrabalho; ver histórico do repo se precisar reverter.)
   + statcards), `GcRecorrencias` (CRUD de templates),
   `GcExpenseInstanceForm`, `GcExpenseTemplateForm`, motor
   `gcGenerateMissingInstances` (geração lazy até o mês atual, mensal ou
-  anual, respeitando pausa/data-fim).
+  anual, respeitando pausa/data-fim). `GcRecorrencias` também tem a
+  engrenagem (mesma posição/estilo da aba Deste mês) que abre
+  `GcManageCategoriesModal` — como as categorias (`expense_categories`,
+  campo `ordem`) são compartilhadas entre as duas sub-abas, reordenar ali
+  reordena as subseções nas duas.
 - ~~Fase 3 — Investimentos~~ ✅ feito: `GcInvestimentos` (saldo mensal
   editável inline + histórico + statcards Saldo em Caixa/Poder de Compra),
   `GcInvestmentSnapshotForm`. **`GC_PODER_COMPRA_BASE = 1000` confirmado
@@ -342,12 +357,20 @@ Firebase ser criado).
   menor exatamente pelo valor das 4 contas do Bruno. Marque uma despesa
   como paga (checkbox inline) e confirme que persiste ao trocar de mês e
   voltar. Toque numa linha pra editar; FAB na aba do mês abre menu
-  "Despesa avulsa" / "Nova recorrência". Troque pra **Recorrências** —
+  "Despesa avulsa" / "Nova recorrência". Confirme que tudo pago no cartão
+  — assinaturas (Apple One, Disney+, etc.) E parceladas (Notebook 3x) —
+  **não aparece** nessa lista — só em Cartão de Crédito e em Recorrências
+  — e que existe uma linha fixa dourada "Fatura do cartão" acima da lista,
+  que abre direto o seletor de cartão/fatura (mesmo fluxo do FAB "Fatura
+  do cartão"). Troque pra **Recorrências** —
   filtro de mês some; deve listar as 17 recorrências de demo (com
   "Anual · <mês>", "pausada" na Cerâmica, "0% minha parte" nas contas de
   Casa); FAB abre direto o formulário de nova recorrência (campo "Mês de
   cobrança" só quando frequência é Anual). Hub **não** lista Recorrências
-  como item próprio.
+  como item próprio. Confirme que a engrenagem também aparece em
+  Recorrências (mesma posição da aba Deste mês) e abre o mesmo modal de
+  categorias; reordene uma categoria ali e volte pra Deste mês — a nova
+  ordem das subseções deve valer nas duas sub-abas.
 
 - **Investimentos (Fase 3)**: abra Investimentos pela gaveta — em modo demo
   deve mostrar Saldo em Caixa R$51.773,18 e Poder de Compra 5.177,32%
