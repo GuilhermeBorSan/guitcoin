@@ -287,6 +287,42 @@ function gcFaturaInstances(instances, faturaCompetencia, diaFechamento) {
     gcFaturaCompetencia(i.competencia, i.diaCompra, diaFechamento) === faturaCompetencia
   );
 }
+// Quanto ainda falta pagar em compras parceladas ativas no cartão, a
+// partir de hoje (não depende do mês da fatura sendo visualizado). Pra
+// cada compra parcelada (mesmo templateId), pega a parcela mais recente já
+// gerada e soma o que resta dali em diante, incluindo ela mesma.
+function gcParcelasEmAberto(instances) {
+  const maisRecentePorCompra = new Map();
+  for (const i of instances) {
+    if (!i.noCartao || !i.totalParcelas) continue;
+    const chave = i.templateId || i.id;
+    const atual = maisRecentePorCompra.get(chave);
+    if (!atual || i.competencia > atual.competencia) maisRecentePorCompra.set(chave, i);
+  }
+  let total = 0;
+  for (const i of maisRecentePorCompra.values()) {
+    const restantes = Math.max(0, (i.totalParcelas || 0) - (i.parcelaAtual || 0) + 1);
+    total += restantes * (i.valor || 0);
+  }
+  return total;
+}
+// Estimativa do total da próxima fatura (mês seguinte a hoje), a partir
+// dos TEMPLATES — não das instâncias, porque o mês seguinte ainda não foi
+// gerado (geração lazy nunca adianta mês futuro). Só recorrências ativas
+// marcadas "no cartão" entram (mesmo filtro de gcGenerateMissingInstances,
+// sem gerar nada); despesas avulsas ficam de fora por não se repetirem.
+function gcProjecaoProximaFatura(templates) {
+  const proxima = gcShiftCompetencia(competenciaAtual(), 1);
+  return (templates || []).reduce((s, t) => {
+    if (!t.noCartao || t.ativo === false || !t.dataInicio) return s;
+    if (proxima < t.dataInicio || (t.dataFim && proxima > t.dataFim)) return s;
+    if (t.frequencia === "anual") {
+      const compAnual = `${proxima.slice(0, 4)}-${String(t.mesCobranca || 1).padStart(2, "0")}`;
+      if (compAnual !== proxima) return s;
+    }
+    return s + (t.valorPadrao || 0);
+  }, 0);
+}
 function gcGroupInstances(instances, competencia, categories) {
   const doMes = gcInstancesForCompetencia(instances, competencia);
   const cats = (categories || []).slice().sort((a, b) => (a.ordem || 0) - (b.ordem || 0));
@@ -2087,7 +2123,7 @@ function GcManageCategoriesModal({ categories, onSave, onReorder, onDelete, onCl
    é isso que diferencia essa tela de Despesas do mês, que agrupa por
    categoria; os itens aparecem nas duas telas ao mesmo tempo.
 ----------------------------------------------------------------*/
-function GcCartao({ instances, categories, competencia, diaFechamento, onTogglePago, onEditInstance, onOpenSettings }) {
+function GcCartao({ instances, templates, categories, competencia, diaFechamento, onTogglePago, onEditInstance, onOpenSettings }) {
   const itens = gcFaturaInstances(instances, competencia, diaFechamento)
     .slice()
     .sort((a, b) => {
@@ -2096,23 +2132,29 @@ function GcCartao({ instances, categories, competencia, diaFechamento, onToggleP
       return (a.descricao || "").localeCompare(b.descricao || "");
     });
   const total = itens.reduce((s, i) => s + (i.valor || 0), 0);
-  const custo = itens.reduce((s, i) => s + gcCustoInstance(i), 0);
-  const pagasCount = itens.filter(i => i.pago).length;
+  // Cartão é só do Gui (sem divisão) e a fatura é paga de uma vez só — não
+  // fazem sentido cards de "custo após divisão" nem de "X/Y pagas" aqui
+  // (diferente de Despesas do mês, onde cada linha tem seu próprio boleto).
+  // Em troca: quanto ainda falta pagar em parcelamentos + estimativa da
+  // próxima fatura, pra dar uma visão pra frente sem precisar navegar mês
+  // a mês.
+  const parcelasEmAberto = gcParcelasEmAberto(instances);
+  const projecaoProxima = gcProjecaoProximaFatura(templates);
 
   return (
-    <>
+    <div className="gc-screen">
       <div className="gc-statcards gc-statcards-3">
         <div className="gc-statcard">
           <span className="gc-statcard-num gc-money">{gcFmtMoney(total)}</span>
           <span className="gc-statcard-cap">Total da fatura</span>
         </div>
         <div className="gc-statcard">
-          <span className="gc-statcard-num gc-money gc-num-red">{gcFmtMoney(custo)}</span>
-          <span className="gc-statcard-cap">Meu custo (após divisão)</span>
+          <span className="gc-statcard-num gc-money">{gcFmtMoney(parcelasEmAberto)}</span>
+          <span className="gc-statcard-cap">Parcelas em aberto</span>
         </div>
         <div className="gc-statcard">
-          <span className={"gc-statcard-num" + (itens.length > 0 && pagasCount === itens.length ? " gc-num-accent" : "")}>{pagasCount}/{itens.length}</span>
-          <span className="gc-statcard-cap">Pagas</span>
+          <span className="gc-statcard-num gc-money">{gcFmtMoney(projecaoProxima)}</span>
+          <span className="gc-statcard-cap">Projeção próximo mês</span>
         </div>
       </div>
 
@@ -2151,7 +2193,7 @@ function GcCartao({ instances, categories, competencia, diaFechamento, onToggleP
           ))}
         </div>
       )}
-    </>
+    </div>
   );
 }
 
@@ -3612,7 +3654,7 @@ function App({ session }) {
             <GcInvestimentos snapshots={investmentSnapshots} onEdit={(comp) => setSnapshotForm({ initialCompetencia: comp })} />
           ) : subTab === "cartao" ? (
             <GcCartao
-              instances={expenseInstances} categories={expenseCategories} competencia={cartaoComp}
+              instances={expenseInstances} templates={expenseTemplates} categories={expenseCategories} competencia={cartaoComp}
               diaFechamento={cardSettings ? cardSettings.diaFechamento : null}
               onTogglePago={toggleExpenseInstancePago}
               onEditInstance={(inst) => setInstanceForm({ initial: inst })}
