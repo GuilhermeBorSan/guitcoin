@@ -340,31 +340,23 @@ function gcFaturaInstances(instances, faturaCompetencia, cards, cardFilter) {
   });
 }
 // Quanto ainda falta pagar em compras parceladas ativas no cartão, a
-// partir de hoje (não depende do mês da fatura sendo visualizado). Pra
-// cada compra parcelada (mesmo templateId), pega a parcela mais recente já
-// gerada e soma o que resta dali em diante, incluindo ela mesma.
+// partir do mês atual (não depende do mês da fatura sendo visualizado).
+// Soma as instâncias parceladas com competencia >= hoje — parcelados já
+// nascem com todas as parcelas (ver gcGenerateMissingInstances).
 function gcParcelasEmAberto(instances, cardFilter) {
   const filtro = cardFilter || "all";
-  const maisRecentePorCompra = new Map();
-  for (const i of instances || []) {
-    if (!i.noCartao || !i.totalParcelas) continue;
-    if (filtro !== "all" && i.cardId !== filtro) continue;
-    const chave = i.templateId || i.id;
-    const atual = maisRecentePorCompra.get(chave);
-    if (!atual || i.competencia > atual.competencia) maisRecentePorCompra.set(chave, i);
-  }
-  let total = 0;
-  for (const i of maisRecentePorCompra.values()) {
-    const restantes = Math.max(0, (i.totalParcelas || 0) - (i.parcelaAtual || 0) + 1);
-    total += restantes * (i.valor || 0);
-  }
-  return total;
+  const hoje = competenciaAtual();
+  return (instances || []).reduce((s, i) => {
+    if (!i.noCartao || !i.totalParcelas) return s;
+    if (filtro !== "all" && i.cardId !== filtro) return s;
+    if (i.competencia < hoje) return s;
+    return s + (i.valor || 0);
+  }, 0);
 }
 // Estimativa do total da próxima fatura (mês seguinte a hoje), a partir
-// dos TEMPLATES — não das instâncias, porque o mês seguinte ainda não foi
-// gerado (geração lazy nunca adianta mês futuro). Só recorrências ativas
-// marcadas "no cartão" entram (mesmo filtro de gcGenerateMissingInstances,
-// sem gerar nada); despesas avulsas ficam de fora por não se repetirem.
+// dos TEMPLATES — cobre recorrências mensais/anuais cujo mês seguinte
+// ainda não foi gerado (só parcelado adianta). Despesas avulsas ficam de
+// fora por não se repetirem.
 function gcProjecaoProximaFatura(templates, cardFilter) {
   const filtro = cardFilter || "all";
   const proxima = gcShiftCompetencia(competenciaAtual(), 1);
@@ -447,10 +439,11 @@ function gcNovaInstanciaDeTemplate(t, competencia) {
     cardId: t.noCartao ? (t.cardId || null) : null,
   };
 }
-// Geração LAZY das instâncias que faltam, até `competenciaLimite` (nunca
-// adianta meses futuros — ver CLAUDE.md/plano). Mensal: todo mês entre
-// data_inicio e min(competenciaLimite, data_fim). Anual: só o mês
-// mes_cobranca do ano de competenciaLimite.
+// Geração LAZY das instâncias que faltam. Mensal comum: só até
+// `competenciaLimite` (nunca adianta mês futuro — evita reeditar por
+// reajuste de preço, ex. Disney+). Parcelado: gera TODAS as parcelas até
+// dataFim, inclusive futuras — o valor da parcela já é fixo na compra.
+// Anual: só o mês mes_cobranca do ano de competenciaLimite.
 function gcGenerateMissingInstances(templates, instances, competenciaLimite) {
   const existentes = new Set(instances.map(i => (i.templateId || "") + "|" + i.competencia));
   const novas = [];
@@ -464,7 +457,11 @@ function gcGenerateMissingInstances(templates, instances, competenciaLimite) {
       const key = t.id + "|" + comp;
       if (!existentes.has(key)) { novas.push(gcNovaInstanciaDeTemplate(t, comp)); existentes.add(key); }
     } else {
-      const fim = t.dataFim && t.dataFim < competenciaLimite ? t.dataFim : competenciaLimite;
+      // Parcelado com dataFim: cobre o ciclo inteiro. Sem dataFim (legado) ou
+      // mensal comum: respeita o teto do mês atual.
+      const fim = (t.parcelado && t.dataFim)
+        ? t.dataFim
+        : (t.dataFim && t.dataFim < competenciaLimite ? t.dataFim : competenciaLimite);
       let comp = t.dataInicio;
       let guard = 0;
       while (comp <= fim && guard < 600) {
@@ -1020,8 +1017,8 @@ function useGcData(session) {
         } catch (delErr) { console.error(delErr); }
       }
       let instances = instancesTrabalhoMigradas;
-      // Geração lazy: cria só as instâncias que faltam até o mês atual e já
-      // grava de volta (batch), pra não repetir o cálculo em todo load.
+      // Geração lazy: mensais até o mês atual; parcelados até dataFim
+      // (todas as parcelas). Grava em batch pra não repetir em todo load.
       const novas = gcGenerateMissingInstances(templatesFinais, instances, competenciaAtual());
       if (novas.length) {
         try {
@@ -2133,8 +2130,7 @@ function GcExpenseTemplateForm({ initial, categories, mode, defaultParcelado, de
   const [busy, setBusy] = useState(false);
 
   // Parcelamento força mensal e calcula sozinho até quando gerar (dataFim) —
-  // gcGenerateMissingInstances já para de gerar sozinha nesse mês, sem
-  // precisar de nenhuma mudança no motor de geração.
+  // gcGenerateMissingInstances gera o ciclo inteiro (inclui meses futuros).
   // No modo cartão o fluxo já decide: recorrente = false, parcelada = true.
   const parceladoFinal = isCartao ? !!defaultParcelado : parcelado;
   const frequenciaEfetiva = parceladoFinal ? "mensal" : frequencia;
@@ -2426,7 +2422,7 @@ function GcManageCategoriesModal({ categories, onSave, onReorder, onDelete, onCl
    Lista PLANA (sem agrupar por categoria). Fechamento é por cartão
    (ver gcFaturaCompetencia/gcFaturaInstances).
 ----------------------------------------------------------------*/
-function GcCartao({ instances, templates, categories, cards, competencia, cardFilter, onCardFilterChange, onEditInstance, onOpenSettings }) {
+function GcCartao({ instances, templates, categories, cards, competencia, onCompetenciaChange, cardFilter, onCardFilterChange, onEditInstance, onOpenSettings }) {
   const cardsList = gcNormalizeCards(cards);
   const filtro = cardFilter || "all";
   const tabOptions = [
@@ -2476,9 +2472,15 @@ function GcCartao({ instances, templates, categories, cards, competencia, cardFi
         </div>
       </div>
 
-      <div className="gc-despesas-toolbar">
-        <span className="gc-month-label">Fatura de {competenciaLabel(competencia)}</span>
-        <button type="button" className="lb-icon-btn gc-despesas-toolbar-cat" onClick={onOpenSettings} aria-label="Gerenciar cartões"><Settings size={18} /></button>
+      <div className="gc-month-switch gc-month-switch-edges">
+        <button type="button" className="lb-icon-btn" onClick={() => onCompetenciaChange(gcShiftCompetencia(competencia, -1))} aria-label="Fatura anterior"><ChevronLeft size={20} /></button>
+        <span className="gc-month-switch-mid">
+          <span className="gc-month-label">Fatura de {competenciaLabel(competencia)}</span>
+          {filtro === "all" && (
+            <button type="button" className="lb-icon-btn" onClick={onOpenSettings} aria-label="Gerenciar cartões"><Settings size={18} /></button>
+          )}
+        </span>
+        <button type="button" className="lb-icon-btn" onClick={() => onCompetenciaChange(gcShiftCompetencia(competencia, 1))} aria-label="Próxima fatura"><ChevronRight size={20} /></button>
       </div>
 
       {cardsList.length === 0 ? (
@@ -3247,7 +3249,7 @@ function GcDashboard({ incomeEntries, expenseInstances, investmentSnapshots, wis
         </div>
         <div className="gc-statcard">
           <span className="gc-statcard-num">{itensNaLista}</span>
-          <span className="gc-statcard-cap">Itens na Lista de Sonhos</span>
+          <span className="gc-statcard-cap">Itens na Lista Sonhos</span>
         </div>
         <div className="gc-statcard">
           <span className="gc-statcard-num gc-money gc-num-red">{gcFmtMoney(custoDeVidaAnual)}</span>
@@ -4040,11 +4042,11 @@ function App({ session }) {
             )}
           </div>
           <span className="gc-topbar-spacer" />
-          {(subTab === "dashboard" || subTab === "receitas" || (subTab === "despesas" && despesasSub === "mes") || subTab === "cartao") ? (
+          {(subTab === "dashboard" || subTab === "receitas" || (subTab === "despesas" && despesasSub === "mes")) ? (
             <div className="gc-topbar-filter">
               <button type="button" className={"lb-icon-btn" + (topbarFilterOpen ? " active" : "")}
                 onClick={() => { setHubOpen(false); setTopbarFilterOpen(o => !o); }}
-                aria-label={subTab === "despesas" ? `Filtrar por mês (${competenciaLabel(despesasComp)})` : subTab === "cartao" ? `Filtrar por mês da fatura (${competenciaLabel(cartaoComp)})` : `Filtrar por ano (${subTab === "dashboard" ? dashboardAno : receitasAno})`}
+                aria-label={subTab === "despesas" ? `Filtrar por mês (${competenciaLabel(despesasComp)})` : `Filtrar por ano (${subTab === "dashboard" ? dashboardAno : receitasAno})`}
                 aria-expanded={topbarFilterOpen}
                 aria-haspopup="dialog">
                 <Filter size={18} />
@@ -4052,7 +4054,7 @@ function App({ session }) {
               {topbarFilterOpen && (
                 <>
                   <div className="gc-topbar-filter-backdrop" onClick={() => setTopbarFilterOpen(false)} />
-                  <div className="gc-topbar-filter-popover" role="dialog" aria-label={subTab === "despesas" ? "Mês das despesas" : subTab === "cartao" ? "Mês da fatura" : "Ano"}>
+                  <div className="gc-topbar-filter-popover" role="dialog" aria-label={subTab === "despesas" ? "Mês das despesas" : "Ano"}>
                     {subTab === "despesas" ? (
                       <>
                         <span className="gc-topbar-filter-label">Mês</span>
@@ -4060,15 +4062,6 @@ function App({ session }) {
                           <button type="button" className="lb-icon-btn" onClick={() => setDespesasComp(gcShiftCompetencia(despesasComp, -1))} aria-label="Mês anterior"><ChevronLeft size={20} /></button>
                           <span className="gc-month-label">{competenciaLabel(despesasComp)}</span>
                           <button type="button" className="lb-icon-btn" onClick={() => setDespesasComp(gcShiftCompetencia(despesasComp, 1))} aria-label="Próximo mês"><ChevronRight size={20} /></button>
-                        </div>
-                      </>
-                    ) : subTab === "cartao" ? (
-                      <>
-                        <span className="gc-topbar-filter-label">Mês da fatura</span>
-                        <div className="gc-month-switch">
-                          <button type="button" className="lb-icon-btn" onClick={() => setCartaoComp(gcShiftCompetencia(cartaoComp, -1))} aria-label="Fatura anterior"><ChevronLeft size={20} /></button>
-                          <span className="gc-month-label">{competenciaLabel(cartaoComp)}</span>
-                          <button type="button" className="lb-icon-btn" onClick={() => setCartaoComp(gcShiftCompetencia(cartaoComp, 1))} aria-label="Próxima fatura"><ChevronRight size={20} /></button>
                         </div>
                       </>
                     ) : (
@@ -4132,6 +4125,7 @@ function App({ session }) {
             <GcCartao
               instances={expenseInstances} templates={expenseTemplates} categories={expenseCategories}
               cards={cardSettings} competencia={cartaoComp}
+              onCompetenciaChange={setCartaoComp}
               cardFilter={cartaoCardFilter} onCardFilterChange={setCartaoCardFilter}
               onEditInstance={(inst) => setInstanceForm({ initial: inst, mode: "cartao" })}
               onOpenSettings={() => setCardSettingsForm(true)}
@@ -4604,6 +4598,9 @@ div.gc-statcard { cursor: default; }
 .gc-statcard-cap { font-family: 'Space Grotesk', sans-serif; font-size: 10px; text-transform: uppercase; letter-spacing: .4px; color: var(--gc-ink-soft); line-height: 1.3; }
 
 .gc-month-switch { display: flex; align-items: center; justify-content: center; gap: var(--sp-3); }
+.gc-month-switch-edges { justify-content: space-between; width: 100%; gap: var(--sp-2); }
+.gc-month-switch-mid { display: inline-flex; align-items: center; justify-content: center; gap: 4px; min-width: 0; flex: 1; }
+.gc-month-switch-edges > .lb-icon-btn { flex-shrink: 0; }
 .gc-despesas-toolbar { display: flex; align-items: center; justify-content: center; position: relative; }
 .gc-despesas-toolbar-cat { position: absolute; right: 0; }
 .gc-categories-list { display: flex; flex-direction: column; gap: 2px; max-height: 320px; overflow-y: auto; }
@@ -4900,7 +4897,6 @@ button.gc-list-row-btn:hover { background: var(--gc-surface-2); }
   font-weight: 600; text-transform: uppercase; letter-spacing: .5px;
   color: var(--gc-ink-soft); margin-bottom: 4px; text-align: center;
 }
-
 .gc-topbar-brand { position: relative; flex-shrink: 0; z-index: 1; }
 .gc-hub-backdrop { position: fixed; inset: 0; z-index: 25; }
 .gc-hub-popover {
