@@ -2634,6 +2634,71 @@ function GcCardsManager({ cards, onSave, onDelete, onClose }) {
   );
 }
 
+// Marcar uma recorrência já cadastrada como "paga no cartão" — em vez de
+// criar uma recorrência do zero (que exigia preencher "Data da cobrança"
+// + "Fatura inicial", uma dupla de campos fácil de preencher errado, ver
+// CLAUDE.md). Compras parceladas ficam de fora (têm fluxo próprio de
+// criação, não fazem sentido "escolher da lista"). Marcar/desmarcar aqui
+// só chama saveExpenseTemplate — o motor de geração lazy já copia
+// noCartao/cardId pro resto dos meses sozinho, e a propagação pras
+// instâncias já geradas (mês atual em diante) também já existe nesse verbo.
+function GcCartaoEscolherRecorrencia({ templates, cards, onToggleNoCartao, onClose }) {
+  // Só recorrências que ainda podem gerar cobrança daqui pra frente —
+  // pausada (ativo:false) ou encerrada (dataFim já passou) fica de fora,
+  // senão o checkbox marca mas não muda nada visível (a instância nunca
+  // seria gerada mesmo).
+  const competenciaAtualAgora = competenciaAtual();
+  const cardsList = gcNormalizeCards(cards);
+  const disponiveis = templates
+    .filter(t => !t.parcelado && t.ativo !== false && (!t.dataFim || t.dataFim >= competenciaAtualAgora))
+    .slice()
+    .sort((a, b) => (a.nome || "").localeCompare(b.nome || ""));
+
+  return (
+    <Modal title="Marcar recorrência como paga no cartão" onClose={onClose}>
+      {disponiveis.length === 0 ? (
+        <EmptyState icon={<Repeat size={40} />} title="Nenhuma recorrência cadastrada" message="Cadastre uma recorrência em Despesas → Recorrências primeiro, depois volte aqui pra marcar ela como paga no cartão." />
+      ) : (
+        <>
+          <p className="lb-hint gc-parcela-hint">
+            Marque quais recorrências já cadastradas são pagas no cartão. Pra ajustar o dia da cobrança, edite a recorrência em Despesas → Recorrências.
+          </p>
+          <div className="gc-list">
+            {disponiveis.map(t => {
+              const nomeCartao = t.noCartao ? gcCardNome(cardsList, t.cardId) : null;
+              return (
+                <div className="gc-list-row" key={t.id}>
+                  <GcCheckbox
+                    checked={!!t.noCartao}
+                    onChange={() => onToggleNoCartao(t)}
+                    ariaLabel={t.noCartao ? `Desmarcar ${t.nome} como paga no cartão` : `Marcar ${t.nome} como paga no cartão`}
+                    icon={<Check size={14} />}
+                  />
+                  <span className="gc-list-row-grow">
+                    <span className="gc-list-row-title-line">
+                      <span className="gc-list-row-title">{t.nome}</span>
+                    </span>
+                    {nomeCartao && <small className="gc-list-row-sub">{nomeCartao}</small>}
+                  </span>
+                  <span className="gc-money">{gcFmtMoney(t.valorPadrao)}</span>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+      <div className="lb-form-footer">
+        <div className="lb-form-actions">
+          <div className="lb-form-actions-left" />
+          <div className="lb-form-actions-right">
+            <button type="button" className="lb-btn primary" onClick={onClose}>Pronto</button>
+          </div>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 /* ---------------------------------------------------------------
    TELA: INVESTIMENTOS (Fase 3) — saldo mensal (net worth) editável inline
    pro mês selecionado + histórico + os 2 indicadores que dependem dele no
@@ -3832,6 +3897,7 @@ function App({ session }) {
   const [tripExpenseForm, setTripExpenseForm] = useState(null);
   const [despesasFabMenu, setDespesasFabMenu] = useState(false);
   const [cartaoFabMenu, setCartaoFabMenu] = useState(false);
+  const [cartaoRecorrenciaPicker, setCartaoRecorrenciaPicker] = useState(false);
   const [dashboardFabMenu, setDashboardFabMenu] = useState(false);
   const [sonhosFabMenu, setSonhosFabMenu] = useState(false);
   const [topbarFilterOpen, setTopbarFilterOpen] = useState(false);
@@ -4203,9 +4269,9 @@ function App({ session }) {
                 <FileText size={22} />
                 <span className="gc-fab-option-txt"><strong>Despesa avulsa</strong><small>Uma compra pontual nesta fatura</small></span>
               </button>
-              <button type="button" className="gc-fab-option" onClick={() => { setCartaoFabMenu(false); setTemplateForm({ initial: null, mode: "cartao", defaultParcelado: false, defaultFatura: cartaoComp, defaultCardId: cartaoDefaultCardId }); }}>
+              <button type="button" className="gc-fab-option" onClick={() => { setCartaoFabMenu(false); setCartaoRecorrenciaPicker(true); }}>
                 <Repeat size={22} />
-                <span className="gc-fab-option-txt"><strong>Recorrente</strong><small>Assinatura / cobrança mensal no cartão</small></span>
+                <span className="gc-fab-option-txt"><strong>Recorrente</strong><small>Marcar uma recorrência já cadastrada como paga no cartão</small></span>
               </button>
               <button type="button" className="gc-fab-option" onClick={() => { setCartaoFabMenu(false); setTemplateForm({ initial: null, mode: "cartao", defaultParcelado: true, defaultFatura: cartaoComp, defaultCardId: cartaoDefaultCardId }); }}>
                 <CreditCard size={22} />
@@ -4213,6 +4279,24 @@ function App({ session }) {
               </button>
             </div>
           </Modal>
+        )}
+        {cartaoRecorrenciaPicker && (
+          <GcCartaoEscolherRecorrencia
+            templates={expenseTemplates}
+            cards={cardSettings}
+            onToggleNoCartao={(t) => {
+              const ligar = !t.noCartao;
+              const cardId = ligar
+                ? (t.cardId || cartaoDefaultCardId || (gcNormalizeCards(cardSettings)[0] || {}).id || null)
+                : null;
+              if (ligar && !cardId) {
+                alert("Cadastre um cartão antes de marcar a recorrência.");
+                return;
+              }
+              return saveExpenseTemplate({ ...t, noCartao: ligar, cardId });
+            }}
+            onClose={() => setCartaoRecorrenciaPicker(false)}
+          />
         )}
         {sonhosFabMenu && (
           <Modal title="O que você quer fazer?" onClose={() => setSonhosFabMenu(false)}>

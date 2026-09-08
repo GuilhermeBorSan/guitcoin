@@ -259,6 +259,18 @@ reajuste de preço, ex. Disney+ subindo mês a mês).
   aberto** / **Projeção próximo mês** — filtrados pela aba ativa; na aba de
   um cartão, o meio vira **Dias até o fechamento** (só em **Todos** fica
   Parcelas em aberto); **sem** card de "custo após divisão" nem de "X/Y pagas".
+- ~~Recorrência no cartão: escolher da lista em vez de criar do zero~~ ✅
+  feito: o FAB da tela Cartão → "Recorrente" abre
+  `GcCartaoEscolherRecorrencia` — uma lista das recorrências já
+  cadastradas em Despesas → Recorrências (só as que ainda podem gerar
+  cobrança: `!parcelado`, `ativo !== false` e sem `dataFim` já vencido),
+  cada uma com um checkbox que chama `saveExpenseTemplate` com
+  `noCartao`/`cardId` (o `cardId` vem da aba ativa do Cartão, ou do cartão
+  já gravado na recorrência). Substituiu o fluxo antigo de criar uma
+  recorrência do zero em `mode="cartao"` (que exigia "Data da cobrança" +
+  "Fatura inicial"). "Parcelada" no mesmo FAB continua abrindo
+  `GcExpenseTemplateForm` em `mode="cartao"`. O caminho `mode="cartao"`
+  não-parcelado de `GcExpenseTemplateForm` ficou órfão — limpeza futura.
 
 ## Próximos passos (pós-plano original, sugestões — confirmar com o Gui)
 - Editar/excluir um lançamento de receita específico (`deleteIncomeEntry` já
