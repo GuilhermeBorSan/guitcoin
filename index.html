@@ -1954,7 +1954,7 @@ function GcRecorrencias({ templates, categories, onEdit }) {
   );
 }
 
-function GcExpenseTemplateForm({ initial, categories, mode, defaultParcelado, defaultFatura, onSave, onDelete, onClose }) {
+function GcExpenseTemplateForm({ initial, categories, mode, defaultParcelado, defaultFatura, diaFechamento, onSave, onDelete, onClose }) {
   const isCartao = mode === "cartao";
   const gruposDisponiveis = categories || [];
   const [nome, setNome] = useState(initial ? initial.nome : "");
@@ -1963,7 +1963,17 @@ function GcExpenseTemplateForm({ initial, categories, mode, defaultParcelado, de
   const [mesCobranca, setMesCobranca] = useState(initial && initial.mesCobranca ? String(initial.mesCobranca) : "1");
   const [valorTipo, setValorTipo] = useState(initial ? gcValorTipo(initial) : "fixo");
   const [valorPadrao, setValorPadrao] = useState(initial ? String(initial.valorPadrao) : "");
-  const [dataInicio, setDataInicio] = useState(initial ? initial.dataInicio : (defaultFatura || competenciaAtual()));
+  // No modo cartão o campo de mês é a FATURA (não a competência de compra).
+  // Na edição, reconstruímos a fatura a partir de dataInicio + dia + fechamento.
+  const [dataInicio, setDataInicio] = useState(() => {
+    if (initial) {
+      if (mode === "cartao") {
+        return gcFaturaCompetencia(initial.dataInicio, initial.diaCompra, diaFechamento) || initial.dataInicio;
+      }
+      return initial.dataInicio;
+    }
+    return defaultFatura || competenciaAtual();
+  });
   const [dataFim, setDataFim] = useState(initial && initial.dataFim ? initial.dataFim : "");
   const [parcelado, setParcelado] = useState(initial ? !!initial.parcelado : !!defaultParcelado);
   const [totalParcelas, setTotalParcelas] = useState(initial && initial.totalParcelas ? String(initial.totalParcelas) : "12");
@@ -1990,13 +2000,21 @@ function GcExpenseTemplateForm({ initial, categories, mode, defaultParcelado, de
   const parceladoFinal = isCartao ? !!defaultParcelado : parcelado;
   const frequenciaEfetiva = parceladoFinal ? "mensal" : frequencia;
   const totalParcelasNum = parseInt(totalParcelas, 10) || 0;
-  const dataFimParcelado = parceladoFinal && dataInicio && totalParcelasNum > 0
-    ? gcShiftCompetencia(dataInicio, totalParcelasNum - 1)
+  // dataInicioEfetiva: no cartão, o mês do form é a fatura; gravamos a
+  // competência de compra via anti double-shift (igual à avulsa).
+  const diaCobrancaNum = isCartao
+    ? (parseInt((dataCobranca || "").slice(8, 10), 10) || null)
+    : (parseInt(diaCompra, 10) || null);
+  const dataInicioEfetiva = isCartao
+    ? gcCompetenciaDeFatura(dataInicio, diaCobrancaNum, diaFechamento)
+    : dataInicio;
+  const dataFimParcelado = parceladoFinal && dataInicioEfetiva && totalParcelasNum > 0
+    ? gcShiftCompetencia(dataInicioEfetiva, totalParcelasNum - 1)
     : "";
 
   const submit = async (e) => {
     e.preventDefault();
-    if (!nome.trim() || !dataInicio) return;
+    if (!nome.trim() || !dataInicioEfetiva) return;
     if (parceladoFinal && totalParcelasNum < 1) return;
     setBusy(true);
     let noCartaoSalvo = noCartao;
@@ -2007,9 +2025,8 @@ function GcExpenseTemplateForm({ initial, categories, mode, defaultParcelado, de
     let ativoSalvo = ativo;
 
     if (isCartao) {
-      const dia = parseInt((dataCobranca || "").slice(8, 10), 10) || null;
       noCartaoSalvo = true;
-      diaCompraSalvo = dia;
+      diaCompraSalvo = diaCobrancaNum;
       compartilhadoSalvo = false;
       compartilhadoComSalvo = "";
       minhaParcelaPctSalvo = 100;
@@ -2025,7 +2042,7 @@ function GcExpenseTemplateForm({ initial, categories, mode, defaultParcelado, de
       valorPadrao: parseFloat(String(valorPadrao).replace(",", ".")) || 0,
       compartilhado: compartilhadoSalvo, compartilhadoCom: compartilhadoComSalvo,
       minhaParcelaPct: minhaParcelaPctSalvo,
-      ativo: ativoSalvo, dataInicio,
+      ativo: ativoSalvo, dataInicio: dataInicioEfetiva,
       parcelado: parceladoFinal, totalParcelas: parceladoFinal ? totalParcelasNum : null,
       dataFim: parceladoFinal ? dataFimParcelado : (dataFim || null),
       noCartao: noCartaoSalvo, diaCompra: noCartaoSalvo ? diaCompraSalvo : null,
@@ -3957,6 +3974,7 @@ function App({ session }) {
             mode={templateForm.mode}
             defaultParcelado={templateForm.defaultParcelado}
             defaultFatura={templateForm.defaultFatura}
+            diaFechamento={cardSettings ? cardSettings.diaFechamento : null}
             onSave={saveExpenseTemplate}
             onDelete={deleteExpenseTemplate}
             onClose={() => setTemplateForm(null)}
