@@ -159,7 +159,11 @@ copiados do template) — mensal gera todo mês desde `data_inicio` até
 `saveExpenseTemplate`, seed do modo demo) passam `competenciaAtual()` **+ 1
 mês**, não o mês atual puro — decisão tomada pra resolver a fatura do
 Cartão de Crédito aparecendo vazia pro mês seguinte antes da virada do mês.
-Trade-off aceito conscientemente: se o valor de uma recorrência mudar antes
+**Motivo real por trás da mudança**: a fatura do Nubank do Gui, no mundo
+real, sempre mostra a cobrança do mês seguinte adiantada (ex.: em
+setembro, a fatura de outubro já aparece com as assinaturas lançadas) —
+então o app precisava refletir isso, em vez de só gerar a instância na
+virada do mês. Trade-off aceito conscientemente: se o valor de uma recorrência mudar antes
 do mês virar (ex. Disney+ reajustar), a instância do mês seguinte já foi
 gerada com o valor antigo e precisa ser editada manualmente — editar só o
 template não é mais suficiente pra esse caso. (Antes desta mudança, a regra
