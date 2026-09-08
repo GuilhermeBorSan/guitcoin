@@ -88,6 +88,7 @@ const Settings = (p) => <IconBase {...p}><circle cx="12" cy="12" r="3"/><path d=
 const Filter = (p) => <IconBase {...p}><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></IconBase>;
 const Utensils = (p) => <IconBase {...p}><path d="M3 2v7c0 1.1.9 2 2 2h4a2 2 0 0 0 2-2V2"/><path d="M7 2v20"/><path d="M21 15V2a5 5 0 0 0-5 5v6c0 1.1.9 2 2 2h3z"/><path d="M21 15v7"/></IconBase>;
 const Plane = (p) => <IconBase {...p}><path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-1 .1-1.3.5l-.4.5c-.4.5-.2 1.3.3 1.6L9 12l-2 3H4l-1 1.5 3 1 1 3L8.5 19l3-2 3.7 4.4c.4.4 1.1.4 1.4-.1l.4-.5c.3-.4.3-.9-.2-1.6z"/></IconBase>;
+const CreditCard = (p) => <IconBase {...p}><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></IconBase>;
 
 // Marca (logo G mira — assets/icon.png no círculo dourado via CSS), mesmo
 // papel do GgFlower no Guitchelin: topbar e botão da gaveta.
@@ -118,6 +119,14 @@ function gcShiftCompetencia(comp, delta) {
   const [y, m] = comp.split("-").map(Number);
   const d = new Date(y, m - 1 + delta, 1);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+// Diferença em meses entre duas competências "YYYY-MM" (b - a). Usado pra
+// calcular em qual parcela (1-based) uma competência cai dentro de uma
+// recorrência parcelada — ver gcNovaInstanciaDeTemplate.
+function gcCompetenciaDiffMeses(a, b) {
+  const [ay, am] = a.split("-").map(Number);
+  const [by, bm] = b.split("-").map(Number);
+  return (by - ay) * 12 + (bm - am);
 }
 function gcFmtMoney(v) {
   return (v || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
@@ -258,6 +267,26 @@ function gcMonthInstancesTotal(instances, competencia) {
 function gcCustoMes(instances, competencia) {
   return gcInstancesForCompetencia(instances, competencia).reduce((s, i) => s + gcCustoInstance(i), 0);
 }
+// ---- Fatura do cartão de crédito ----
+// Em qual competência ("YYYY-MM") uma despesa no cartão cai na fatura,
+// dado o dia em que ela normalmente é cobrada e o dia de fechamento
+// configurado. Sem diaCompra/diaFechamento suficientes, não desloca (fica
+// na própria competência da despesa) — o app nunca trava por falta desse
+// dado opcional.
+function gcFaturaCompetencia(competencia, diaCompra, diaFechamento) {
+  if (!diaCompra || !diaFechamento) return competencia;
+  return diaCompra > diaFechamento ? gcShiftCompetencia(competencia, 1) : competencia;
+}
+// Instâncias que caem na fatura de uma competência: olha o próprio mês (o
+// que não passou do fechamento) e o mês anterior (o que passou do
+// fechamento e foi empurrado pra frente).
+function gcFaturaInstances(instances, faturaCompetencia, diaFechamento) {
+  const anterior = gcShiftCompetencia(faturaCompetencia, -1);
+  return instances.filter(i => i.noCartao &&
+    (i.competencia === faturaCompetencia || i.competencia === anterior) &&
+    gcFaturaCompetencia(i.competencia, i.diaCompra, diaFechamento) === faturaCompetencia
+  );
+}
 function gcGroupInstances(instances, competencia, categories) {
   const doMes = gcInstancesForCompetencia(instances, competencia);
   const cats = (categories || []).slice().sort((a, b) => (a.ordem || 0) - (b.ordem || 0));
@@ -291,14 +320,22 @@ function gcGroupTemplates(templates, categories) {
     .filter(g => g.items.length > 0);
 }
 // Uma instância nova gerada a partir de um template (ainda sem id salvo).
+// Quando o template é parcelado (compra parcelada, ex. "TV em 10x"), grava
+// parcelaAtual/totalParcelas NA instância (copiado, não ao vivo) — assim a
+// numeração sobrevive mesmo se o template for depois excluído (instância
+// órfã, templateId: null).
 function gcNovaInstanciaDeTemplate(t, competencia) {
   const variavel = gcValorTipo(t) === "variavel";
+  const parcelado = !!t.parcelado && t.dataInicio;
   return {
     id: uid(), templateId: t.id, grupo: t.grupo, descricao: t.nome, competencia,
     valor: t.valorPadrao || 0, pago: false,
     valorConfirmado: !variavel,
     compartilhado: !!t.compartilhado, compartilhadoCom: t.compartilhadoCom || "",
     minhaParcelaPct: t.minhaParcelaPct != null ? t.minhaParcelaPct : 100,
+    parcelaAtual: parcelado ? gcCompetenciaDiffMeses(t.dataInicio, competencia) + 1 : null,
+    totalParcelas: parcelado ? (t.totalParcelas || null) : null,
+    noCartao: !!t.noCartao, diaCompra: t.noCartao ? (t.diaCompra || null) : null,
   };
 }
 // Geração LAZY das instâncias que faltam, até `competenciaLimite` (nunca
@@ -693,12 +730,15 @@ const GC_DEMO_DATA = {
     { id: "demo-tpl-neoenergia", nome: "NEOENERGIA", grupo: "casa", frequencia: "mensal", valorPadrao: 210, valorTipo: "variavel", compartilhado: true, compartilhadoCom: "Bruno", minhaParcelaPct: 0, ativo: true, dataInicio: "2026-01", dataFim: null },
     { id: "demo-tpl-supergas", nome: "SuperGás", grupo: "casa", frequencia: "mensal", valorPadrao: 90, valorTipo: "variavel", compartilhado: true, compartilhadoCom: "Bruno", minhaParcelaPct: 0, ativo: true, dataInicio: "2026-01", dataFim: null },
     { id: "demo-tpl-internet", nome: "Internet", grupo: "casa", frequencia: "mensal", valorPadrao: 130, valorTipo: "variavel", compartilhado: true, compartilhadoCom: "Bruno", minhaParcelaPct: 0, ativo: true, dataInicio: "2026-01", dataFim: null },
-    { id: "demo-tpl-cartao", nome: "Cartão de crédito", grupo: "pessoal", frequencia: "mensal", valorPadrao: 550, valorTipo: "variavel", compartilhado: false, minhaParcelaPct: 100, ativo: true, dataInicio: "2026-01", dataFim: null },
+    { id: "demo-tpl-cartao", nome: "Cartão de crédito", grupo: "pessoal", frequencia: "mensal", valorPadrao: 550, valorTipo: "variavel", compartilhado: false, minhaParcelaPct: 100, ativo: true, dataInicio: "2026-01", dataFim: null, noCartao: true, diaCompra: 10 },
+    // Demo de compra parcelada no cartão (ver CLAUDE.md > Modelo de dados):
+    // 10x, começa em julho — em setembro é a parcela 3/10.
+    { id: "demo-tpl-notebook", nome: "Notebook parcelado", grupo: "pessoal", frequencia: "mensal", valorPadrao: 349.90, valorTipo: "fixo", compartilhado: false, minhaParcelaPct: 100, ativo: true, dataInicio: "2026-07", dataFim: "2027-04", parcelado: true, totalParcelas: 10, noCartao: true, diaCompra: 18 },
     { id: "demo-tpl-ceramica", nome: "Cerâmica", grupo: "pessoal", frequencia: "mensal", valorPadrao: 500, valorTipo: "variavel", compartilhado: false, minhaParcelaPct: 100, ativo: true, dataInicio: "2026-01", dataFim: "2026-07" },
     { id: "demo-tpl-psicologa", nome: "Psicóloga", grupo: "saude", frequencia: "mensal", valorPadrao: 520, valorTipo: "fixo", compartilhado: false, minhaParcelaPct: 100, ativo: true, dataInicio: "2026-01", dataFim: null },
     { id: "demo-tpl-plano-saude", nome: "Plano de Saúde", grupo: "saude", frequencia: "mensal", valorPadrao: 620, valorTipo: "fixo", compartilhado: false, minhaParcelaPct: 100, ativo: true, dataInicio: "2026-01", dataFim: null },
     { id: "demo-tpl-mei", nome: "MEI", grupo: "pessoal", frequencia: "mensal", valorPadrao: 86.05, valorTipo: "fixo", compartilhado: false, minhaParcelaPct: 100, ativo: true, dataInicio: "2026-01", dataFim: null },
-    { id: "demo-tpl-apple-one", nome: "Apple One", grupo: "assinaturas", frequencia: "mensal", valorPadrao: 42.90, valorTipo: "fixo", compartilhado: false, minhaParcelaPct: 100, ativo: true, dataInicio: "2026-01", dataFim: null },
+    { id: "demo-tpl-apple-one", nome: "Apple One", grupo: "assinaturas", frequencia: "mensal", valorPadrao: 42.90, valorTipo: "fixo", compartilhado: false, minhaParcelaPct: 100, ativo: true, dataInicio: "2026-01", dataFim: null, noCartao: true, diaCompra: 22 },
     { id: "demo-tpl-icloud", nome: "iCloud+", grupo: "assinaturas", frequencia: "mensal", valorPadrao: 5.90, valorTipo: "fixo", compartilhado: false, minhaParcelaPct: 100, ativo: true, dataInicio: "2026-01", dataFim: null },
     { id: "demo-tpl-youtube", nome: "Youtube Premium", grupo: "assinaturas", frequencia: "mensal", valorPadrao: 53.90, valorTipo: "fixo", compartilhado: false, minhaParcelaPct: 100, ativo: true, dataInicio: "2026-01", dataFim: null },
     { id: "demo-tpl-disney", nome: "Disney+", grupo: "assinaturas", frequencia: "mensal", valorPadrao: 66.90, valorTipo: "fixo", compartilhado: false, minhaParcelaPct: 100, ativo: true, dataInicio: "2026-01", dataFim: null },
@@ -767,6 +807,11 @@ const GC_DEMO_DATA = {
     { id: "demo-texp-6", tripId: "demo-trip-ba", categoria: "Alimentação", descricao: "Almoço na praia", dia: 1, valor: 140, pagoPorId: "demo-part-gui" },
     { id: "demo-texp-7", tripId: "demo-trip-ba", categoria: "Transporte", descricao: "Aluguel de buggy", dia: 1, valor: 250, pagoPorId: "demo-part-bruno" },
   ],
+  // Cartão de crédito: coleção singleton (ver CLAUDE.md > Modelo de dados).
+  // Fechamento dia 20 — o Apple One (diaCompra 22) cai na fatura do mês
+  // seguinte; Cartão de crédito (dia 10) e Notebook parcelado (dia 18)
+  // ficam na fatura do próprio mês.
+  cardSettings: [{ id: "main", diaFechamento: 20 }],
 };
 
 // ---- Dados (Firestore: as 8 coleções do app). Isolado aqui: as telas
@@ -792,6 +837,9 @@ function useGcData(session) {
   const [wishlistSavingsSnapshots, setWishlistSavingsSnapshots] = useState(GC_IS_LOCAL ? GC_DEMO_DATA.wishlistSavingsSnapshots : []);
   const [trips, setTrips] = useState(GC_IS_LOCAL ? GC_DEMO_DATA.trips : []);
   const [tripExpenses, setTripExpenses] = useState(GC_IS_LOCAL ? GC_DEMO_DATA.tripExpenses : []);
+  // Cartão de crédito: coleção singleton (um único doc "main") — sem
+  // cadastro de múltiplos cartões, ver CLAUDE.md > Modelo de dados.
+  const [cardSettings, setCardSettings] = useState(GC_IS_LOCAL ? (GC_DEMO_DATA.cardSettings || [])[0] || null : null);
   const [loading, setLoading] = useState(!GC_IS_LOCAL);
   const [error, setError] = useState(null);
 
@@ -799,7 +847,7 @@ function useGcData(session) {
     if (GC_IS_LOCAL || !gcFirestore) { setLoading(false); return; }
     setLoading(true);
     try {
-      const [categories, sources, entries, projections, templates, instRaw, snapshots, wishlist, wishSavings, tripsData, tripExpensesData] = await Promise.all([
+      const [categories, sources, entries, projections, templates, instRaw, snapshots, wishlist, wishSavings, tripsData, tripExpensesData, cardSettingsData] = await Promise.all([
         gcFetchAll(session, "expense_categories"),
         gcFetchAll(session, "income_sources"),
         gcFetchAll(session, "income_entries"),
@@ -811,6 +859,7 @@ function useGcData(session) {
         gcFetchAll(session, "wishlist_savings_snapshots"),
         gcFetchAll(session, "trips"),
         gcFetchAll(session, "trip_expenses"),
+        gcFetchAll(session, "credit_card_settings"),
       ]);
       // Instalação nova (sem nenhuma categoria ainda): semeia as categorias
       // padrão uma única vez, pra tela de Despesas não nascer vazia.
@@ -886,6 +935,7 @@ function useGcData(session) {
       setWishlistSavingsSnapshots(wishSavings);
       setTrips(tripsData);
       setTripExpenses(tripExpensesData);
+      setCardSettings(cardSettingsData[0] || null);
     } catch (err) {
       console.error(err);
       setError(gcWriteErrorMsg(err, "carregar os dados"));
@@ -1137,9 +1187,17 @@ function useGcData(session) {
     catch (err) { console.error(err); setError(gcWriteErrorMsg(err, "excluir o gasto da viagem")); await loadData(); return false; }
   };
 
+  const saveCardSettings = async (diaFechamento) => {
+    const novo = { id: "main", diaFechamento };
+    setCardSettings(novo);
+    if (GC_IS_LOCAL) return true;
+    try { await gcUpsertOne(session, "credit_card_settings", novo); return true; }
+    catch (err) { console.error(err); setError(gcWriteErrorMsg(err, "salvar a configuração do cartão")); await loadData(); return false; }
+  };
+
   return {
     expenseCategories, incomeSources, incomeEntries, incomeProjections, expenseTemplates, expenseInstances, investmentSnapshots, wishlistItems, wishlistSavingsSnapshots,
-    trips, tripExpenses,
+    trips, tripExpenses, cardSettings,
     loading, error, dismissError: () => setError(null),
     saveExpenseCategory, reorderExpenseCategories, deleteExpenseCategory,
     saveIncomeSource, deleteIncomeSource, saveIncomeEntry, deleteIncomeEntry, saveIncomeProjection,
@@ -1147,6 +1205,7 @@ function useGcData(session) {
     saveInvestmentSnapshot, deleteInvestmentSnapshot, saveWishlistItem, deleteWishlistItem, toggleWishlistComprado,
     saveWishlistSavingsSnapshot, deleteWishlistSavingsSnapshot,
     saveTrip, deleteTrip, saveTripExpense, deleteTripExpense,
+    saveCardSettings,
   };
 }
 
@@ -1565,7 +1624,9 @@ function GcDespesas({ instances, categories, competencia, onTogglePago, onSaveVa
                       <span className="gc-list-row-grow">
                         <span className="gc-list-row-title-line">
                           <span className="gc-list-row-title">{inst.descricao}</span>
-                          {inst.templateId && (
+                          {inst.totalParcelas ? (
+                            <span className="gc-pill gc-pill-muted" title="Parcela" aria-label={`Parcela ${inst.parcelaAtual} de ${inst.totalParcelas}`}>{inst.parcelaAtual}/{inst.totalParcelas}</span>
+                          ) : inst.templateId && (
                             <span className="gc-pill gc-pill-muted gc-pill-icon" title="Recorrente" aria-label="Recorrente"><Repeat size={11} /></span>
                           )}
                           {pendente && <span className="gc-pill gc-pill-gold">a confirmar</span>}
@@ -1606,7 +1667,7 @@ function GcDespesas({ instances, categories, competencia, onTogglePago, onSaveVa
   );
 }
 
-function GcExpenseInstanceForm({ initial, categories, competencia, onSave, onDelete, onClose }) {
+function GcExpenseInstanceForm({ initial, categories, competencia, defaultNoCartao, onSave, onDelete, onClose }) {
   const [descricao, setDescricao] = useState(initial ? initial.descricao : "Compras");
   const [grupo, setGrupo] = useState(initial ? initial.grupo : ((categories.find(g => g.id === "pessoal") || categories[0] || {}).id || "pessoal"));
   const [valor, setValor] = useState(initial ? String(initial.valor) : "");
@@ -1614,6 +1675,8 @@ function GcExpenseInstanceForm({ initial, categories, competencia, onSave, onDel
   const [compartilhado, setCompartilhado] = useState(initial ? initial.compartilhado : false);
   const [compartilhadoCom, setCompartilhadoCom] = useState(initial ? initial.compartilhadoCom : "");
   const [minhaParcelaPct, setMinhaParcelaPct] = useState(initial ? String(initial.minhaParcelaPct) : "100");
+  const [noCartao, setNoCartao] = useState(initial ? !!initial.noCartao : !!defaultNoCartao);
+  const [diaCompra, setDiaCompra] = useState(initial && initial.diaCompra ? String(initial.diaCompra) : "");
   const [busy, setBusy] = useState(false);
 
   const submit = async (e) => {
@@ -1628,6 +1691,11 @@ function GcExpenseInstanceForm({ initial, categories, competencia, onSave, onDel
       pago, compartilhado, compartilhadoCom: compartilhado ? compartilhadoCom : "",
       minhaParcelaPct: compartilhado ? (parseFloat(minhaParcelaPct) || 0) : 100,
       valorConfirmado: true,
+      // Número de parcela é copiado do template no momento da geração, não
+      // editável aqui — só preservar o que já existia.
+      parcelaAtual: (initial && initial.parcelaAtual) || null,
+      totalParcelas: (initial && initial.totalParcelas) || null,
+      noCartao, diaCompra: noCartao ? (parseInt(diaCompra, 10) || null) : null,
     });
     setBusy(false);
     if (ok !== false) onClose();
@@ -1639,6 +1707,9 @@ function GcExpenseInstanceForm({ initial, categories, competencia, onSave, onDel
         <Field label="Descrição" wide>
           <input value={descricao} onChange={e => setDescricao(e.target.value)} required autoFocus />
         </Field>
+        {initial && initial.totalParcelas && (
+          <p className="lb-hint gc-parcela-hint">Parcela {initial.parcelaAtual} de {initial.totalParcelas} — número definido na recorrência, não editável aqui.</p>
+        )}
         <Field label="Categoria" wide select>
           <select value={grupo} onChange={e => setGrupo(e.target.value)}>
             {categories.map(g => <option key={g.id} value={g.id}>{g.nome}</option>)}
@@ -1662,6 +1733,14 @@ function GcExpenseInstanceForm({ initial, categories, competencia, onSave, onDel
               <input type="number" min="0" max="100" step="1" value={minhaParcelaPct} onChange={e => setMinhaParcelaPct(e.target.value)} />
             </Field>
           </>
+        )}
+        <Field label="Pago no cartão de crédito?" wide>
+          <Segmented options={[{ value: "nao", label: "Não" }, { value: "sim", label: "Sim" }]} value={noCartao ? "sim" : "nao"} onChange={v => setNoCartao(v === "sim")} />
+        </Field>
+        {noCartao && (
+          <Field label="Dia da cobrança no cartão (opcional)">
+            <input type="number" min="1" max="31" step="1" value={diaCompra} onChange={e => setDiaCompra(e.target.value)} placeholder="Ex.: 12" />
+          </Field>
         )}
         <div className="lb-form-footer">
           <div className="lb-form-actions">
@@ -1728,8 +1807,11 @@ function GcRecorrencias({ templates, categories, onEdit }) {
                         <span>{t.nome}</span>
                       </span>
                       <small className="gc-list-row-sub">
-                        {t.frequencia === "anual" ? `Anual · ${MONTH_LABELS[(t.mesCobranca || 1) - 1]}` : "Mensal"}
-                        {t.dataFim ? " · pausada" : t.ativo === false ? " · inativa" : ""}
+                        {t.parcelado
+                          ? `Parcelado (${t.totalParcelas || "?"}x)`
+                          : t.frequencia === "anual" ? `Anual · ${MONTH_LABELS[(t.mesCobranca || 1) - 1]}` : "Mensal"}
+                        {!t.parcelado && (t.dataFim ? " · pausada" : t.ativo === false ? " · inativa" : "")}
+                        {t.parcelado && t.ativo === false ? " · pausada" : ""}
                         {t.compartilhado ? ` · ${t.minhaParcelaPct}% minha parte` : ""}
                       </small>
                     </span>
@@ -1776,26 +1858,45 @@ function GcExpenseTemplateForm({ initial, categories, onSave, onDelete, onClose 
   const [valorPadrao, setValorPadrao] = useState(initial ? String(initial.valorPadrao) : "");
   const [dataInicio, setDataInicio] = useState(initial ? initial.dataInicio : competenciaAtual());
   const [dataFim, setDataFim] = useState(initial && initial.dataFim ? initial.dataFim : "");
+  const [parcelado, setParcelado] = useState(initial ? !!initial.parcelado : false);
+  const [totalParcelas, setTotalParcelas] = useState(initial && initial.totalParcelas ? String(initial.totalParcelas) : "12");
+  // Maioria das compras parceladas é no cartão — pré-marca "Sim" só numa
+  // recorrência nova parcelada, mas continua editável.
+  const [noCartao, setNoCartao] = useState(initial ? !!initial.noCartao : false);
+  const [diaCompra, setDiaCompra] = useState(initial && initial.diaCompra ? String(initial.diaCompra) : "");
   const [compartilhado, setCompartilhado] = useState(initial ? initial.compartilhado : false);
   const [compartilhadoCom, setCompartilhadoCom] = useState(initial ? initial.compartilhadoCom : "");
   const [minhaParcelaPct, setMinhaParcelaPct] = useState(initial ? String(initial.minhaParcelaPct) : "100");
   const [ativo, setAtivo] = useState(initial ? initial.ativo : true);
   const [busy, setBusy] = useState(false);
 
+  // Parcelamento força mensal e calcula sozinho até quando gerar (dataFim) —
+  // gcGenerateMissingInstances já para de gerar sozinha nesse mês, sem
+  // precisar de nenhuma mudança no motor de geração.
+  const frequenciaEfetiva = parcelado ? "mensal" : frequencia;
+  const totalParcelasNum = parseInt(totalParcelas, 10) || 0;
+  const dataFimParcelado = parcelado && dataInicio && totalParcelasNum > 0
+    ? gcShiftCompetencia(dataInicio, totalParcelasNum - 1)
+    : "";
+
   const submit = async (e) => {
     e.preventDefault();
     if (!nome.trim() || !dataInicio) return;
+    if (parcelado && totalParcelasNum < 1) return;
     setBusy(true);
     const ok = await onSave({
       id: initial ? initial.id : uid(),
-      nome: nome.trim(), grupo, frequencia,
-      mesCobranca: frequencia === "anual" ? parseInt(mesCobranca, 10) : null,
+      nome: nome.trim(), grupo, frequencia: frequenciaEfetiva,
+      mesCobranca: frequenciaEfetiva === "anual" ? parseInt(mesCobranca, 10) : null,
       diaVencimento: (initial && initial.diaVencimento) || null,
       valorTipo,
       valorPadrao: parseFloat(String(valorPadrao).replace(",", ".")) || 0,
       compartilhado, compartilhadoCom: compartilhado ? compartilhadoCom : "",
       minhaParcelaPct: compartilhado ? (parseFloat(minhaParcelaPct) || 0) : 100,
-      ativo, dataInicio, dataFim: dataFim || null,
+      ativo, dataInicio,
+      parcelado, totalParcelas: parcelado ? totalParcelasNum : null,
+      dataFim: parcelado ? dataFimParcelado : (dataFim || null),
+      noCartao, diaCompra: noCartao ? (parseInt(diaCompra, 10) || null) : null,
       observacao: (initial && initial.observacao) || "",
     });
     setBusy(false);
@@ -1819,10 +1920,21 @@ function GcExpenseTemplateForm({ initial, categories, onSave, onDelete, onClose 
         <Field label={valorTipo === "variavel" ? "Valor estimado" : "Valor padrão"} wide>
           <input type="number" inputMode="decimal" step="0.01" value={valorPadrao} onChange={e => setValorPadrao(e.target.value)} required />
         </Field>
-        <Field label="Frequência" wide>
-          <Segmented options={[{ value: "mensal", label: "Mensal" }, { value: "anual", label: "Anual (1x/ano)" }]} value={frequencia} onChange={setFrequencia} />
+        <Field label="Compra parcelada?" wide>
+          <Segmented options={[{ value: "nao", label: "Não" }, { value: "sim", label: "Sim (ex.: 10x no cartão)" }]} value={parcelado ? "sim" : "nao"} onChange={v => {
+            const sim = v === "sim";
+            setParcelado(sim);
+            // Maioria das compras parceladas é no cartão — só pré-marca em
+            // recorrência nova, sem sobrescrever uma edição já em curso.
+            if (sim && !initial) setNoCartao(true);
+          }} />
         </Field>
-        {frequencia === "anual" && (
+        {!parcelado && (
+          <Field label="Frequência" wide>
+            <Segmented options={[{ value: "mensal", label: "Mensal" }, { value: "anual", label: "Anual (1x/ano)" }]} value={frequencia} onChange={setFrequencia} />
+          </Field>
+        )}
+        {!parcelado && frequencia === "anual" && (
           <Field label="Mês de cobrança" wide select>
             <select value={mesCobranca} onChange={e => setMesCobranca(e.target.value)}>
               {MONTH_LABELS.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
@@ -1832,9 +1944,21 @@ function GcExpenseTemplateForm({ initial, categories, onSave, onDelete, onClose 
         <Field label="Começa em">
           <input type="month" value={dataInicio} onChange={e => setDataInicio(e.target.value)} required />
         </Field>
-        <Field label="Termina em (opcional)">
-          <input type="month" value={dataFim} onChange={e => setDataFim(e.target.value)} />
-        </Field>
+        {parcelado ? (
+          <Field label="Quantidade de parcelas">
+            <input type="number" min="1" step="1" value={totalParcelas} onChange={e => setTotalParcelas(e.target.value)} required />
+          </Field>
+        ) : (
+          <Field label="Termina em (opcional)">
+            <input type="month" value={dataFim} onChange={e => setDataFim(e.target.value)} />
+          </Field>
+        )}
+        {parcelado && dataFimParcelado && (
+          <p className="lb-hint gc-parcela-hint">
+            Última parcela ({totalParcelasNum}/{totalParcelasNum}) em {competenciaLabel(dataFimParcelado)}.
+            Reduzir a quantidade depois não apaga parcelas futuras já geradas — é preciso excluí-las manualmente.
+          </p>
+        )}
         <Field label="Dividida com terceiro?" wide>
           <Segmented options={[{ value: "nao", label: "Não" }, { value: "sim", label: "Sim" }]} value={compartilhado ? "sim" : "nao"} onChange={v => setCompartilhado(v === "sim")} />
         </Field>
@@ -1847,6 +1971,14 @@ function GcExpenseTemplateForm({ initial, categories, onSave, onDelete, onClose 
               <input type="number" min="0" max="100" step="1" value={minhaParcelaPct} onChange={e => setMinhaParcelaPct(e.target.value)} />
             </Field>
           </>
+        )}
+        <Field label="Pago no cartão de crédito?" wide>
+          <Segmented options={[{ value: "nao", label: "Não" }, { value: "sim", label: "Sim" }]} value={noCartao ? "sim" : "nao"} onChange={v => setNoCartao(v === "sim")} />
+        </Field>
+        {noCartao && (
+          <Field label="Dia da cobrança no cartão (opcional)">
+            <input type="number" min="1" max="31" step="1" value={diaCompra} onChange={e => setDiaCompra(e.target.value)} placeholder="Ex.: 12" />
+          </Field>
         )}
         <Field label="Ativa?" wide>
           <Segmented options={[{ value: "ativa", label: "Ativa" }, { value: "pausada", label: "Pausada" }]} value={ativo ? "ativa" : "pausada"} onChange={v => setAtivo(v === "ativa")} />
@@ -1942,6 +2074,117 @@ function GcManageCategoriesModal({ categories, onSave, onReorder, onDelete, onCl
       <form onSubmit={adicionar} className="gc-categories-add">
         <input value={novaCategoria} onChange={e => setNovaCategoria(e.target.value)} placeholder="Nova categoria" disabled={busy} />
         <button type="submit" className="lb-btn primary" disabled={busy || !novaCategoria.trim()}>Adicionar</button>
+      </form>
+    </Modal>
+  );
+}
+
+/* ---------------------------------------------------------------
+   TELA: CARTÃO DE CRÉDITO — fatura do mês (parceladas + qualquer despesa
+   marcada "paga no cartão", avulsa ou recorrência), com dia de fechamento
+   configurável (ver gcFaturaCompetencia/gcFaturaInstances). Lista PLANA
+   (sem agrupar por categoria) pra imitar um extrato de cartão de verdade —
+   é isso que diferencia essa tela de Despesas do mês, que agrupa por
+   categoria; os itens aparecem nas duas telas ao mesmo tempo.
+----------------------------------------------------------------*/
+function GcCartao({ instances, categories, competencia, diaFechamento, onTogglePago, onEditInstance, onOpenSettings }) {
+  const itens = gcFaturaInstances(instances, competencia, diaFechamento)
+    .slice()
+    .sort((a, b) => {
+      const da = a.diaCompra || 99, db = b.diaCompra || 99;
+      if (da !== db) return da - db;
+      return (a.descricao || "").localeCompare(b.descricao || "");
+    });
+  const total = itens.reduce((s, i) => s + (i.valor || 0), 0);
+  const custo = itens.reduce((s, i) => s + gcCustoInstance(i), 0);
+  const pagasCount = itens.filter(i => i.pago).length;
+
+  return (
+    <>
+      <div className="gc-statcards gc-statcards-3">
+        <div className="gc-statcard">
+          <span className="gc-statcard-num gc-money">{gcFmtMoney(total)}</span>
+          <span className="gc-statcard-cap">Total da fatura</span>
+        </div>
+        <div className="gc-statcard">
+          <span className="gc-statcard-num gc-money gc-num-red">{gcFmtMoney(custo)}</span>
+          <span className="gc-statcard-cap">Meu custo (após divisão)</span>
+        </div>
+        <div className="gc-statcard">
+          <span className={"gc-statcard-num" + (itens.length > 0 && pagasCount === itens.length ? " gc-num-accent" : "")}>{pagasCount}/{itens.length}</span>
+          <span className="gc-statcard-cap">Pagas</span>
+        </div>
+      </div>
+
+      <div className="gc-despesas-toolbar">
+        <span className="gc-month-label">Fatura de {competenciaLabel(competencia)}</span>
+        <button type="button" className="lb-icon-btn gc-despesas-toolbar-cat" onClick={onOpenSettings} aria-label="Configurar dia de fechamento"><Settings size={18} /></button>
+      </div>
+
+      {itens.length === 0 ? (
+        <EmptyState icon={<CreditCard size={40} />} title="Nada nessa fatura" message="Marque uma despesa avulsa ou recorrência como &quot;Paga no cartão&quot; pra ela aparecer aqui." />
+      ) : (
+        <div className="gc-list">
+          {itens.map(inst => (
+            <div className="gc-list-row" key={inst.id}>
+              <GcCheckbox
+                checked={inst.pago}
+                onChange={() => onTogglePago(inst.id)}
+                ariaLabel={inst.pago ? `Marcar ${inst.descricao} como não paga` : `Marcar ${inst.descricao} como paga`}
+                icon={<Check size={14} />}
+              />
+              <button type="button" className="gc-list-row-main" onClick={() => onEditInstance(inst)}>
+                <span className="gc-list-row-grow">
+                  <span className="gc-list-row-title-line">
+                    <span className="gc-list-row-title">{inst.descricao}</span>
+                    {inst.totalParcelas && (
+                      <span className="gc-pill gc-pill-muted" title="Parcela" aria-label={`Parcela ${inst.parcelaAtual} de ${inst.totalParcelas}`}>{inst.parcelaAtual}/{inst.totalParcelas}</span>
+                    )}
+                  </span>
+                  <small className="gc-list-row-sub">
+                    {gcExpenseGroupLabel(inst.grupo, categories)}{inst.diaCompra ? ` · dia ${inst.diaCompra}` : ""}
+                  </small>
+                </span>
+              </button>
+              <span className="gc-row-valor-display gc-money">{gcFmtMoney(inst.valor)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
+function GcCardSettingsForm({ diaFechamento, onSave, onClose }) {
+  const [dia, setDia] = useState(diaFechamento ? String(diaFechamento) : "");
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setBusy(true);
+    const ok = await onSave(parseInt(dia, 10) || null);
+    setBusy(false);
+    if (ok !== false) onClose();
+  };
+
+  return (
+    <Modal title="Configurar cartão de crédito" onClose={onClose}>
+      <form onSubmit={submit} className="lb-form-grid">
+        <Field label="Dia de fechamento da fatura (1–31)" wide>
+          <input type="number" min="1" max="31" step="1" value={dia} onChange={e => setDia(e.target.value)} placeholder="Ex.: 20" autoFocus />
+        </Field>
+        <p className="lb-hint gc-parcela-hint">
+          Compras cobradas depois desse dia entram na fatura do mês seguinte. Deixe em branco pra não deslocar nenhuma despesa de mês.
+        </p>
+        <div className="lb-form-footer">
+          <div className="lb-form-actions">
+            <div className="lb-form-actions-left" />
+            <div className="lb-form-actions-right">
+              <button type="button" className="lb-btn ghost" onClick={onClose}>Cancelar</button>
+              <button type="submit" className="lb-btn primary" disabled={busy}>{busy ? "Salvando..." : "Salvar"}</button>
+            </div>
+          </div>
+        </div>
       </form>
     </Modal>
   );
@@ -3086,6 +3329,7 @@ const GC_NAV_ITEMS = [
   { value: "despesas", label: "Despesas", icon: (s) => <FileText size={s} />, group: null },
   { value: "receitas", label: "Receitas", icon: (s) => <TrendingUp size={s} />, group: null },
   { value: "investimentos", label: "Investimentos", icon: (s) => <TrendingUp size={s} />, group: null },
+  { value: "cartao", label: "Cartão de Crédito", icon: (s) => <CreditCard size={s} />, group: "Mais" },
   { value: "viagens", label: "Viagens", icon: (s) => <Plane size={s} />, group: "Mais" },
   { value: "sonhos", label: "Lista de Sonhos", icon: (s) => <Gift size={s} />, group: "Mais" },
   { value: "conta", label: "Conta", icon: (s) => <Utensils size={s} />, group: "Mais" },
@@ -3108,7 +3352,7 @@ function gcReceitasDefaultCompetencia(ano) {
 function App({ session }) {
   const {
     expenseCategories, incomeSources, incomeEntries, expenseTemplates, expenseInstances, investmentSnapshots, wishlistItems, wishlistSavingsSnapshots,
-    trips, tripExpenses,
+    trips, tripExpenses, cardSettings,
     loading, error, dismissError,
     saveExpenseCategory, reorderExpenseCategories, deleteExpenseCategory,
     saveIncomeSource, deleteIncomeSource, saveIncomeEntry, saveIncomeProjection,
@@ -3116,6 +3360,7 @@ function App({ session }) {
     saveInvestmentSnapshot, deleteInvestmentSnapshot, saveWishlistItem, deleteWishlistItem, toggleWishlistComprado,
     saveWishlistSavingsSnapshot, deleteWishlistSavingsSnapshot,
     saveTrip, deleteTrip, saveTripExpense, deleteTripExpense,
+    saveCardSettings,
   } = useGcData(session);
   // (deleteIncomeEntry existe no hook, ainda sem UI que remova um lançamento
   // pontual — fica pra quando a tela de Receitas ganhar essa ação.)
@@ -3124,6 +3369,8 @@ function App({ session }) {
   const [receitasAno, setReceitasAno] = useState(gcInitialReceitasAno);
   const [despesasComp, setDespesasComp] = useState(competenciaAtual);
   const [despesasSub, setDespesasSub] = useState("mes");
+  const [cartaoComp, setCartaoComp] = useState(competenciaAtual);
+  const [cardSettingsForm, setCardSettingsForm] = useState(false);
   const [dashboardAno, setDashboardAno] = useState(() => competenciaAtual().slice(0, 4));
   const [sourceForm, setSourceForm] = useState(null);
   const [instanceForm, setInstanceForm] = useState(null);
@@ -3275,11 +3522,11 @@ function App({ session }) {
             )}
           </div>
           <span className="gc-topbar-spacer" />
-          {(subTab === "dashboard" || subTab === "receitas" || (subTab === "despesas" && despesasSub === "mes")) ? (
+          {(subTab === "dashboard" || subTab === "receitas" || (subTab === "despesas" && despesasSub === "mes") || subTab === "cartao") ? (
             <div className="gc-topbar-filter">
               <button type="button" className={"lb-icon-btn" + (topbarFilterOpen ? " active" : "")}
                 onClick={() => { setHubOpen(false); setTopbarFilterOpen(o => !o); }}
-                aria-label={subTab === "despesas" ? `Filtrar por mês (${competenciaLabel(despesasComp)})` : `Filtrar por ano (${subTab === "dashboard" ? dashboardAno : receitasAno})`}
+                aria-label={subTab === "despesas" ? `Filtrar por mês (${competenciaLabel(despesasComp)})` : subTab === "cartao" ? `Filtrar por mês da fatura (${competenciaLabel(cartaoComp)})` : `Filtrar por ano (${subTab === "dashboard" ? dashboardAno : receitasAno})`}
                 aria-expanded={topbarFilterOpen}
                 aria-haspopup="dialog">
                 <Filter size={18} />
@@ -3287,7 +3534,7 @@ function App({ session }) {
               {topbarFilterOpen && (
                 <>
                   <div className="gc-topbar-filter-backdrop" onClick={() => setTopbarFilterOpen(false)} />
-                  <div className="gc-topbar-filter-popover" role="dialog" aria-label={subTab === "despesas" ? "Mês das despesas" : "Ano"}>
+                  <div className="gc-topbar-filter-popover" role="dialog" aria-label={subTab === "despesas" ? "Mês das despesas" : subTab === "cartao" ? "Mês da fatura" : "Ano"}>
                     {subTab === "despesas" ? (
                       <>
                         <span className="gc-topbar-filter-label">Mês</span>
@@ -3295,6 +3542,15 @@ function App({ session }) {
                           <button type="button" className="lb-icon-btn" onClick={() => setDespesasComp(gcShiftCompetencia(despesasComp, -1))} aria-label="Mês anterior"><ChevronLeft size={20} /></button>
                           <span className="gc-month-label">{competenciaLabel(despesasComp)}</span>
                           <button type="button" className="lb-icon-btn" onClick={() => setDespesasComp(gcShiftCompetencia(despesasComp, 1))} aria-label="Próximo mês"><ChevronRight size={20} /></button>
+                        </div>
+                      </>
+                    ) : subTab === "cartao" ? (
+                      <>
+                        <span className="gc-topbar-filter-label">Mês da fatura</span>
+                        <div className="gc-month-switch">
+                          <button type="button" className="lb-icon-btn" onClick={() => setCartaoComp(gcShiftCompetencia(cartaoComp, -1))} aria-label="Fatura anterior"><ChevronLeft size={20} /></button>
+                          <span className="gc-month-label">{competenciaLabel(cartaoComp)}</span>
+                          <button type="button" className="lb-icon-btn" onClick={() => setCartaoComp(gcShiftCompetencia(cartaoComp, 1))} aria-label="Próxima fatura"><ChevronRight size={20} /></button>
                         </div>
                       </>
                     ) : (
@@ -3354,6 +3610,14 @@ function App({ session }) {
             />
           ) : subTab === "investimentos" ? (
             <GcInvestimentos snapshots={investmentSnapshots} onEdit={(comp) => setSnapshotForm({ initialCompetencia: comp })} />
+          ) : subTab === "cartao" ? (
+            <GcCartao
+              instances={expenseInstances} categories={expenseCategories} competencia={cartaoComp}
+              diaFechamento={cardSettings ? cardSettings.diaFechamento : null}
+              onTogglePago={toggleExpenseInstancePago}
+              onEditInstance={(inst) => setInstanceForm({ initial: inst })}
+              onOpenSettings={() => setCardSettingsForm(true)}
+            />
           ) : subTab === "sonhos" ? (
             <GcSonhos
               items={wishlistItems}
@@ -3405,6 +3669,7 @@ function App({ session }) {
               else setDespesasFabMenu(true);
             }
             else if (subTab === "investimentos") setSnapshotForm({ initialCompetencia: competenciaAtual() });
+            else if (subTab === "cartao") setInstanceForm({ initial: null, defaultNoCartao: true, competencia: cartaoComp });
             else if (subTab === "sonhos") setSonhosFabMenu(true);
             else if (subTab === "conta") setContaItemForm({ initial: null });
             else if (subTab === "viagens") {
@@ -3412,7 +3677,7 @@ function App({ session }) {
               else setTripForm({ initial: null });
             }
           }}
-          aria-label={subTab === "dashboard" ? "Adicionar" : subTab === "receitas" ? "Nova fonte de receita" : subTab === "despesas" ? (despesasSub === "recorrencias" ? "Nova recorrência" : "Nova despesa") : subTab === "investimentos" ? "Registrar saldo" : subTab === "sonhos" ? "Adicionar" : subTab === "conta" ? "Novo item da conta" : subTab === "viagens" ? (tripAberta ? "Novo gasto" : "Nova viagem") : "Adicionar"}>
+          aria-label={subTab === "dashboard" ? "Adicionar" : subTab === "receitas" ? "Nova fonte de receita" : subTab === "despesas" ? (despesasSub === "recorrencias" ? "Nova recorrência" : "Nova despesa") : subTab === "investimentos" ? "Registrar saldo" : subTab === "cartao" ? "Nova despesa no cartão" : subTab === "sonhos" ? "Adicionar" : subTab === "conta" ? "Novo item da conta" : subTab === "viagens" ? (tripAberta ? "Novo gasto" : "Nova viagem") : "Adicionar"}>
           <Plus size={26} />
         </button>
 
@@ -3487,7 +3752,20 @@ function App({ session }) {
           </Modal>
         )}
         {instanceForm && (
-          <GcExpenseInstanceForm initial={instanceForm.initial} categories={expenseCategories} competencia={despesasComp} onSave={saveExpenseInstance} onDelete={deleteExpenseInstance} onClose={() => setInstanceForm(null)} />
+          <GcExpenseInstanceForm
+            initial={instanceForm.initial}
+            categories={expenseCategories}
+            competencia={instanceForm.competencia || despesasComp}
+            defaultNoCartao={instanceForm.defaultNoCartao}
+            onSave={saveExpenseInstance} onDelete={deleteExpenseInstance} onClose={() => setInstanceForm(null)}
+          />
+        )}
+        {cardSettingsForm && (
+          <GcCardSettingsForm
+            diaFechamento={cardSettings ? cardSettings.diaFechamento : null}
+            onSave={saveCardSettings}
+            onClose={() => setCardSettingsForm(false)}
+          />
         )}
         {templateForm && (
           <GcExpenseTemplateForm initial={templateForm.initial} categories={expenseCategories} onSave={saveExpenseTemplate} onDelete={deleteExpenseTemplate} onClose={() => setTemplateForm(null)} />
@@ -3805,6 +4083,7 @@ div.gc-statcard { cursor: default; }
 .gc-conta-fields { display: flex; flex-direction: column; gap: var(--sp-3); }
 .gc-conta-hint { margin: 0; padding: var(--sp-3) var(--sp-1); font-size: 13.5px; }
 .gc-conta-hint-left { margin: -4px 0 0; text-align: left; font-size: 12.5px; }
+.gc-parcela-hint { grid-column: 1 / -1; margin: -4px 0 0; text-align: left; font-size: 12.5px; }
 .gc-conta-taxa-row { display: flex; align-items: center; gap: var(--sp-3); padding: 2px 0; }
 .gc-conta-taxa-label { flex: 1; font-family: 'Space Grotesk', sans-serif; font-weight: 600; font-size: 14px; color: var(--gc-ink); }
 .gc-conta-taxa-pct {
