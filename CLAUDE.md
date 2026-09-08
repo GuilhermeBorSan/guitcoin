@@ -258,6 +258,15 @@ reajuste de preço, ex. Disney+ subindo mês a mês).
   fechamento). Coleção `credit_card_settings` (singleton) + campos
   `noCartao`/`diaCompra` em `expense_templates`/`expense_instances` (ver
   Modelo de dados). Um único cartão suportado (sem cadastro de múltiplos).
+  Item do hub na linha principal (ao lado de Investimentos), não em
+  "Mais". Statcards são **Total da fatura** / **Parcelas em aberto**
+  (`gcParcelasEmAberto`, quanto falta pagar de parcelamentos ativos a
+  partir de hoje) / **Projeção próximo mês** (`gcProjecaoProximaFatura`,
+  estimativa a partir dos templates ativos "no cartão", já que o mês
+  seguinte ainda não foi gerado) — **sem** card de "custo após divisão"
+  nem de "X/Y pagas": cartão é só do Gui (sem divisão) e a fatura é paga
+  de uma vez só, então esses dois não fazem sentido aqui (diferente de
+  Despesas do mês, onde cada linha é um boleto próprio).
 
 ## Próximos passos (pós-plano original, sugestões — confirmar com o Gui)
 - Editar/excluir um lançamento de receita específico (`deleteIncomeEntry` já
@@ -334,17 +343,21 @@ Firebase ser criado).
   cadastro). Toque no FAB — deve abrir "Registrar saldo" pré-preenchido com
   o mês atual e o valor já salvo dele.
 
-- **Cartão de Crédito**: abra "Cartão de Crédito" pela gaveta (seção
-  "Mais") — em modo demo (fechamento dia 20) deve listar "Cartão de
-  crédito" (dia 10) e "Notebook parcelado" (dia 18, com a pill "3/10")
-  na fatura do mês atual, e "Apple One" (dia 22, empurrada pelo
-  fechamento) na fatura do mês seguinte — confirme trocando o mês pelo
-  filtro do topbar. Marque uma despesa como paga (mesmo checkbox de
-  Despesas) e confirme que persiste. Edite o dia de fechamento pelo ícone
-  de engrenagem e confirme que a fatura recalcula (aumentar o fechamento
-  pra além do dia 22 deve trazer o Apple One de volta pra fatura do mês
-  atual). Toque no FAB — deve abrir "Nova despesa avulsa" já com "Pago no
-  cartão?" marcado como Sim.
+- **Cartão de Crédito**: abra "Cartão de Crédito" pelo hub (linha
+  principal, ao lado de Investimentos) — em modo demo (fechamento dia 20)
+  deve listar "Cartão de crédito" (dia 10) e "Notebook parcelado" (dia 18,
+  com a pill "3/10") na fatura do mês atual, e "Apple One" (dia 22,
+  empurrada pelo fechamento) na fatura do mês seguinte — confirme
+  trocando o mês pelo filtro do topbar. Confira os statcards: "Parcelas em
+  aberto" deve mostrar o total ainda a pagar do Notebook parcelado (7
+  parcelas restantes × R$349,90, a partir da parcela atual) e "Projeção
+  próximo mês" deve somar os `valorPadrao` das recorrências ativas "no
+  cartão" (Cartão de crédito + Notebook parcelado + Apple One). Marque uma
+  despesa como paga (mesmo checkbox de Despesas) e confirme que persiste.
+  Edite o dia de fechamento pelo ícone de engrenagem e confirme que a
+  fatura recalcula (aumentar o fechamento pra além do dia 22 deve trazer o
+  Apple One de volta pra fatura do mês atual). Toque no FAB — deve abrir
+  "Nova despesa avulsa" já com "Pago no cartão?" marcado como Sim.
 
 - **Lista de Sonhos (Fase 4)**: abra Lista de Sonhos pela gaveta — em modo
   demo deve mostrar TECH (R$0,00, os 3 itens sem preço) e MISC (R$1.000,00,
