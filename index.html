@@ -92,6 +92,7 @@ const Filter = (p) => <IconBase {...p}><polygon points="22 3 2 3 10 12.46 10 19 
 const Utensils = (p) => <IconBase {...p}><path d="M3 2v7c0 1.1.9 2 2 2h4a2 2 0 0 0 2-2V2"/><path d="M7 2v20"/><path d="M21 15V2a5 5 0 0 0-5 5v6c0 1.1.9 2 2 2h3z"/><path d="M21 15v7"/></IconBase>;
 const Plane = (p) => <IconBase {...p}><path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-1 .1-1.3.5l-.4.5c-.4.5-.2 1.3.3 1.6L9 12l-2 3H4l-1 1.5 3 1 1 3L8.5 19l3-2 3.7 4.4c.4.4 1.1.4 1.4-.1l.4-.5c.3-.4.3-.9-.2-1.6z"/></IconBase>;
 const CreditCard = (p) => <IconBase {...p}><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></IconBase>;
+const Wallet = (p) => <IconBase {...p}><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><path d="M18 12a2 2 0 0 0 0 4h4v-4z"/></IconBase>;
 
 // Marca (logo G mira — assets/icon.png no círculo dourado via CSS), mesmo
 // papel do GgFlower no Guitchelin: topbar e botão da gaveta.
@@ -1612,9 +1613,9 @@ function GcReceitas({ sources, entries, ano, onEditSource, onSaveEntryValor }) {
       </div>
 
       {ativos.length === 0 ? (
-        <EmptyState icon={<TrendingUp size={40} />} title="Nenhuma fonte de receita" message="Toque no + pra cadastrar seu salário ou uma renda extra." />
+        <EmptyState icon={<Wallet size={40} />} title="Nenhuma fonte de receita" message="Toque no + pra cadastrar seu salário ou uma renda extra." />
       ) : mesesVisiveis.length === 0 ? (
-        <EmptyState icon={<TrendingUp size={40} />} title="Nenhum mês com receita" message="Toque no + pra cadastrar um lançamento neste ano." />
+        <EmptyState icon={<Wallet size={40} />} title="Nenhum mês com receita" message="Toque no + pra cadastrar um lançamento neste ano." />
       ) : (
         <div className="gc-list gc-receitas-accordion">
           {mesesVisiveis.map(comp => {
@@ -4148,7 +4149,7 @@ function GcTripExpenseForm({ initial, tripId, dia, numDias, existingCategorias, 
 const GC_NAV_ITEMS = [
   { value: "dashboard", label: "Dashboard", icon: (s) => <BarChart3 size={s} />, group: null },
   { value: "despesas", label: "Despesas", icon: (s) => <FileText size={s} />, group: null },
-  { value: "receitas", label: "Receitas", icon: (s) => <TrendingUp size={s} />, group: null },
+  { value: "receitas", label: "Receitas", icon: (s) => <Wallet size={s} />, group: null },
   { value: "investimentos", label: "Investimentos", icon: (s) => <TrendingUp size={s} />, group: null },
   { value: "cartao", label: "Cartão de Crédito", icon: (s) => <CreditCard size={s} />, group: null },
   { value: "viagens", label: "Viagens", icon: (s) => <Plane size={s} />, group: "Mais" },
@@ -4548,7 +4549,7 @@ function App({ session }) {
           <Modal title="O que você quer registrar?" onClose={() => setDashboardFabMenu(false)}>
             <div className="gc-fab-menu">
               <button type="button" className="gc-fab-option" onClick={() => { setDashboardFabMenu(false); setSourceForm({ initial: null, competencia: gcReceitasDefaultCompetencia(receitasAno) }); }}>
-                <TrendingUp size={22} />
+                <Wallet size={22} />
                 <span className="gc-fab-option-txt"><strong>Nova fonte de receita</strong><small>Salário, extra ou outra fonte fixa</small></span>
               </button>
               <button type="button" className="gc-fab-option" onClick={() => { setDashboardFabMenu(false); setSnapshotForm({ initialCompetencia: competenciaAtual() }); }}>
