@@ -36,6 +36,26 @@ Supabase. Ver "Onde está o código" abaixo pro que muda na prática.
   fluxo, é só colar e publicar). Isolada no hook `useGcData(session)` — as
   telas só conhecem os verbos `saveX`/`deleteX`/`toggleXFlag` e os arrays de
   dados, nunca chamam `gcFirestore` direto.
+- **Fila de escritas pendentes em `localStorage`** (`gcQueuePendingWrite`/
+  `gcFlushPendingWrites`, topo de `useGcData`): todo `saveX`/`deleteX`/
+  `toggleXFlag` grava a operação em `localStorage` (síncrono) *antes* de
+  chamar o Firestore, e só tira da fila quando a escrita é confirmada.
+  Existe porque `enablePersistence` (IndexedDB) sozinho não basta — o
+  enfileiramento dele também é assíncrono, então minimizar o app ou trocar
+  de app no celular rápido demais pode matar a aba antes da escrita sequer
+  ser enfileirada, perdendo um item recém-cadastrado ou um toggle de
+  "pago"/"comprado" (relatos reais: "marquei o checkbox e sumiu" e depois
+  "minimizei e os itens já registrados sumiram"). A fila é reaplicada e
+  reenviada em três pontos: no `loadData()` (mount/troca de sessão), e em
+  `visibilitychange`/`pagehide` (app fica oculto ou a aba está descarregando
+  — cobre suspensão sem remontar). `kind` no item da fila decide o verbo do
+  Firestore: `"upsert"` (`gcUpsertOne`), `"upsertMany"` (`gcUpsertMany`,
+  ex. reordenar categorias), `"merge"` (`gcUpdateFields`, um ou mais campos
+  de um doc existente — toggles e os campos de cartão copiados ao editar uma
+  recorrência) ou `"delete"` (`gcDeleteOne`). Instâncias geradas
+  automaticamente pela recorrência (`gcGenerateMissingInstances`) ficam de
+  fora da fila de propósito: são recalculáveis a qualquer momento a partir
+  do próprio template, então não precisam de proteção própria.
 - **Modelo de dados no Firestore**: cada "tabela" do plano original virou
   uma subcoleção em `users/{uid}/<colecao>/{id}` (`income_sources`,
   `income_entries`, `income_projections`, `expense_templates`,
