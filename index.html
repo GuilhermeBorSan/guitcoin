@@ -154,8 +154,12 @@ function gcFmtSignedPct(pct) {
 
 // ---- Fórmulas de Conta (bar/restaurante, só sessão — sem Firebase) ----
 // Itens mandam: se a lista tem algo, a base é a soma; senão, o total manual.
+// `quantidade` (padrão 1, itens antigos sem o campo caem nesse default)
+// evita ter que cadastrar o mesmo item repetido várias vezes — o valor do
+// item é sempre o unitário, multiplicado por quantidade aqui e na exibição.
+function gcContaItemTotal(item) { return (item.valor || 0) * (item.quantidade || 1); }
 function gcContaBase(itens, totalManual) {
-  if (itens && itens.length) return itens.reduce((s, i) => s + (i.valor || 0), 0);
+  if (itens && itens.length) return itens.reduce((s, i) => s + gcContaItemTotal(i), 0);
   return totalManual || 0;
 }
 function gcContaTaxa(base, comTaxa, pct) {
@@ -3866,8 +3870,9 @@ function GcConta({
               <div className="gc-list-row" key={item.id}>
                 <button type="button" className="gc-list-row-main" onClick={() => setItemForm({ initial: item })}>
                   <span className="gc-list-row-title">{item.nome}</span>
+                  {(item.quantidade || 1) > 1 && <span className="gc-pill gc-pill-muted" title="Quantidade" aria-label={`Quantidade ${item.quantidade}`}>×{item.quantidade}</span>}
                 </button>
-                <span className="gc-row-valor-display gc-money">{gcFmtMoney(item.valor)}</span>
+                <span className="gc-row-valor-display gc-money">{gcFmtMoney(gcContaItemTotal(item))}</span>
               </div>
             ))}
           </div>
@@ -3953,15 +3958,19 @@ function GcConta({
 function GcContaItemForm({ initial, onSave, onDelete, onClose }) {
   const [nome, setNome] = useState(initial ? initial.nome : "");
   const [valor, setValor] = useState(initial && initial.valor != null ? String(initial.valor) : "");
+  const [quantidade, setQuantidade] = useState(initial && initial.quantidade != null ? String(initial.quantidade) : "1");
+
+  const v = parseFloat(String(valor).replace(",", ".")) || 0;
+  const qtd = Math.max(1, parseInt(quantidade, 10) || 1);
 
   const submit = (e) => {
     e.preventDefault();
-    const v = parseFloat(String(valor).replace(",", "."));
     if (!Number.isFinite(v) || v < 0) return;
     onSave({
       id: initial ? initial.id : uid(),
       nome: nome.trim() || "Item",
       valor: v,
+      quantidade: qtd,
     });
     onClose();
   };
@@ -3972,9 +3981,13 @@ function GcContaItemForm({ initial, onSave, onDelete, onClose }) {
         <Field label="Nome" wide>
           <input value={nome} onChange={e => setNome(e.target.value)} placeholder="Ex.: chopp, burger" autoFocus />
         </Field>
-        <Field label="Valor" wide>
+        <Field label="Valor unitário" wide>
           <input type="text" inputMode="decimal" min="0" value={valor} onChange={e => setValor(e.target.value)} required />
         </Field>
+        <Field label="Quantidade" wide>
+          <input type="number" inputMode="numeric" min="1" step="1" value={quantidade} onChange={e => setQuantidade(e.target.value)} />
+        </Field>
+        {qtd > 1 && <p className="lb-hint gc-conta-hint-left">Total do item: {gcFmtMoney(v * qtd)}</p>}
         <div className="lb-form-footer">
           <div className="lb-form-actions">
             <div className="lb-form-actions-left">
