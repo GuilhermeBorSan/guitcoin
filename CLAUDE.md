@@ -180,6 +180,22 @@ snake_case) estão todas implementadas: `income_sources`/`income_entries`/
   (maior devedor acerta com o maior credor). Adaptação móvel da planilha:
   o "dia" é um seletor na tela (como o mês em Despesas), não uma coluna de
   grid — não cabe uma matriz categoria×dia na largura de um iPhone.
+- `conta_atual` — rascunho em andamento da tela **Conta** (calculadora de
+  divisão de conta de bar/restaurante): singleton, sempre `id: "atual"`
+  (mesmo precedente do `credit_card_settings` legado, ver "Campos novos no
+  Firestore"). Campos: `itens` (array `{id, nome, valor, quantidade}`),
+  `totalManual`, `comTaxa`, `taxaPct`, `pessoas`, `atualizadoEm`. **Autosave
+  sem botão**: toda alteração chama `saveContaAtual` (em `useGcData`), que
+  enfileira em `localStorage` de forma síncrona e debounça só a chamada de
+  rede (600ms) — mesma fila de escritas pendentes do resto do app, é o que
+  resolve o item sumir ao minimizar (a Conta era 100% `useState` local até
+  essa mudança, sem nenhuma persistência).
+- `contas_salvas` — histórico de contas fechadas: mesmos campos de
+  `conta_atual` mais `total` (congelado no momento do fechamento, não
+  recalculado depois) e `fechadoEm`. Criado pelo botão "Fechar conta"
+  (`fecharConta` em `useGcData`), que arquiva o rascunho aqui e reseta
+  `conta_atual`. Tela tem TabBar Conta/Histórico (mesmo padrão de
+  Itens/Histórico da Lista de Sonhos).
 
 **Geração de instância recorrente é lazy, no carregamento dos dados**:
 `gcGenerateMissingInstances(templates, instances, competenciaLimite)` calcula
@@ -230,7 +246,10 @@ retrabalho; ver histórico do repo se precisar reverter.)
   (`GcDespesasScreen` com TabBar **Deste mês** | **Recorrências** — mês =
   lista agrupada com checkbox "pago"; Recorrências = CRUD de templates),
   Investimentos (lista + modal + gráfico), Lista de Sonhos (agrupada por
-  categoria + subtotal/total; também tem TabBar interno Itens/Histórico).
+  categoria + subtotal/total; também tem TabBar interno Itens/Histórico),
+  Conta (`GcConta`, TabBar Conta/Histórico — Conta = rascunho com autosave,
+  Histórico = lista de contas fechadas por "Fechar conta", ver Modelo de
+  dados).
 - Gráficos: sem biblioteca, SVG/CSS puro (barras 2 séries receita×gastos,
   linha/área pra evolução de investimentos) — mesmo estilo de `GgColumns`
   (Guitchelin) e `MonthLineChart`/`PieChart` (Letterborgs).

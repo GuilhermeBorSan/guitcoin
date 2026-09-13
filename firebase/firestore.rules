@@ -7,11 +7,13 @@
 // users/{uid}/<colecao>/{id} (income_sources, income_entries,
 // income_projections, expense_templates, expense_instances,
 // investment_snapshots, wishlist_items, wishlist_savings_snapshots, trips,
-// trip_expenses). Uma ÚNICA regra recursiva
-// (`{document=**}`) cobre todas elas: só o dono (uid = auth.uid()) lê ou
-// escreve qualquer documento dentro do seu próprio users/{uid}/... — não
-// precisa de uma regra por coleção nem de 4 políticas por tabela como no
-// Postgres, o caminho do documento já faz esse papel.
+// trip_expenses, credit_card_settings, conta_atual, contas_salvas). Uma
+// ÚNICA regra recursiva (`{document=**}`) cobre todas elas — e qualquer
+// coleção nova que vier a existir, sem precisar tocar neste arquivo de
+// novo: só o dono (uid = auth.uid()) lê ou escreve qualquer documento
+// dentro do seu próprio users/{uid}/... — não precisa de uma regra por
+// coleção nem de 4 políticas por tabela como no Postgres, o caminho do
+// documento já faz esse papel.
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
