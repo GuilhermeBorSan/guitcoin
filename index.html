@@ -1046,9 +1046,32 @@ const GC_DEMO_DATA = {
     { id: "demo-card-nubank", nome: "Nubank", diaFechamento: 20, ordem: 1 },
     { id: "demo-card-btg", nome: "BTG", diaFechamento: 10, ordem: 2 },
   ],
+  // Conta (bar/restaurante): rascunho em andamento (autosave) + 1 conta já
+  // fechada no histórico, pra exercitar as duas sub-abas no modo demo.
+  contaAtual: {
+    id: "atual", comTaxa: true, taxaPct: "10", pessoas: "2", totalManual: "", atualizadoEm: Date.now(),
+    itens: [
+      { id: "demo-conta-item-1", nome: "Chopp", valor: 12, quantidade: 4 },
+      { id: "demo-conta-item-2", nome: "Burger", valor: 35, quantidade: 2 },
+    ],
+  },
+  contasSalvas: [
+    {
+      id: "demo-conta-hist-1", comTaxa: true, taxaPct: "10", pessoas: "3", totalManual: "",
+      itens: [
+        { id: "demo-conta-hist-item-1", nome: "Pizza", valor: 60, quantidade: 2 },
+        { id: "demo-conta-hist-item-2", nome: "Refrigerante", valor: 8, quantidade: 3 },
+      ],
+      total: 158.4, fechadoEm: Date.now() - 7 * 24 * 60 * 60 * 1000,
+    },
+  ],
 };
 
-// ---- Dados (Firestore: as 8 coleções do app). Isolado aqui: as telas
+// Rascunho vazio de Conta (fora do modo demo, antes do primeiro autosave —
+// singleton, id fixo "atual", ver useGcData > saveContaAtual).
+const GC_CONTA_ATUAL_DEFAULT = { id: "atual", itens: [], totalManual: "", comTaxa: true, taxaPct: "10", pessoas: "1", atualizadoEm: null };
+
+// ---- Dados (Firestore: as 14 coleções do app). Isolado aqui: as telas
 // nunca chamam gcFirestore direto, só conhecem os verbos save*/delete*/
 // toggle* e os arrays de dados retornados abaixo. ----
 function useGcData(session) {
@@ -1073,6 +1096,12 @@ function useGcData(session) {
   const [tripExpenses, setTripExpenses] = useState(GC_IS_LOCAL ? GC_DEMO_DATA.tripExpenses : []);
   // Cartões de crédito: lista (não singleton) — ver CLAUDE.md > Modelo de dados.
   const [cardSettings, setCardSettings] = useState(GC_IS_LOCAL ? gcNormalizeCards(GC_DEMO_DATA.cardSettings || []) : []);
+  // Conta (bar/restaurante): rascunho atual com autosave (singleton, id
+  // fixo "atual" — mesmo precedente de credit_card_settings legado, ver
+  // CLAUDE.md > Campos novos no Firestore) + histórico de contas fechadas.
+  const [contaAtual, setContaAtual] = useState(GC_IS_LOCAL ? GC_DEMO_DATA.contaAtual : GC_CONTA_ATUAL_DEFAULT);
+  const [contasSalvas, setContasSalvas] = useState(GC_IS_LOCAL ? GC_DEMO_DATA.contasSalvas : []);
+  const contaAtualTimerRef = useRef(null); // debounce só da chamada de rede — a fila em localStorage já é síncrona
   const [loading, setLoading] = useState(!GC_IS_LOCAL);
   const [error, setError] = useState(null);
 
@@ -1080,7 +1109,7 @@ function useGcData(session) {
     if (GC_IS_LOCAL || !gcFirestore) { setLoading(false); return; }
     setLoading(true);
     try {
-      const [categories, sources, entries, projections, templates, instRaw, snapshots, wishlist, wishSavings, tripsData, tripExpensesData, cardSettingsData] = await Promise.all([
+      const [categories, sources, entries, projections, templates, instRaw, snapshots, wishlist, wishSavings, tripsData, tripExpensesData, cardSettingsData, contaAtualRows, contasSalvasData] = await Promise.all([
         gcFetchAll(session, "expense_categories"),
         gcFetchAll(session, "income_sources"),
         gcFetchAll(session, "income_entries"),
@@ -1093,6 +1122,8 @@ function useGcData(session) {
         gcFetchAll(session, "trips"),
         gcFetchAll(session, "trip_expenses"),
         gcFetchAll(session, "credit_card_settings"),
+        gcFetchAll(session, "conta_atual"),
+        gcFetchAll(session, "contas_salvas"),
       ]);
       // Instalação nova (sem nenhuma categoria ainda): semeia as categorias
       // padrão uma única vez, pra tela de Despesas não nascer vazia.
@@ -1164,6 +1195,7 @@ function useGcData(session) {
         income_projections: projections, expense_templates: templatesFinais, expense_instances: instances,
         investment_snapshots: snapshots, wishlist_items: wishlist, wishlist_savings_snapshots: wishSavings,
         trips: tripsData, trip_expenses: tripExpensesData, credit_card_settings: cardSettingsData,
+        conta_atual: contaAtualRows, contas_salvas: contasSalvasData,
       });
       setExpenseCategories(reconciliado.expense_categories);
       setIncomeSources(reconciliado.income_sources);
@@ -1177,6 +1209,8 @@ function useGcData(session) {
       setTrips(reconciliado.trips);
       setTripExpenses(reconciliado.trip_expenses);
       setCardSettings(gcNormalizeCards(reconciliado.credit_card_settings));
+      setContaAtual((reconciliado.conta_atual && reconciliado.conta_atual[0]) || GC_CONTA_ATUAL_DEFAULT);
+      setContasSalvas(reconciliado.contas_salvas);
     } catch (err) {
       console.error(err);
       setError(gcWriteErrorMsg(err, "carregar os dados"));
@@ -1525,6 +1559,51 @@ function useGcData(session) {
     catch (err) { console.error(err); setError(gcWriteErrorMsg(err, "excluir o saldo da poupança")); await loadData(); return false; }
   };
 
+  // Conta: autosave do rascunho a cada alteração (item, taxa, %, pessoas) —
+  // sem botão de salvar. Enfileira em localStorage de forma síncrona a cada
+  // chamada (mesma garantia de durabilidade do resto do app, ver
+  // gcQueuePendingWrite acima) e só debounça a chamada de rede em si, pra
+  // não virar uma escrita por tecla digitada. O useEffect de
+  // visibilitychange/pagehide (acima) já reenvia essa pendência assim que o
+  // app é minimizado, mesmo com o debounce ainda de pé — é isso que resolve
+  // o relato de item sumindo ao minimizar (a Conta nunca persistia nada).
+  const saveContaAtual = (patch) => {
+    let next = null;
+    setContaAtual(prev => { next = { ...prev, ...patch, id: "atual", atualizadoEm: Date.now() }; return next; });
+    if (GC_IS_LOCAL) return;
+    gcQueuePendingWrite({ colecao: "conta_atual", id: "atual", kind: "upsert", data: next });
+    if (contaAtualTimerRef.current) clearTimeout(contaAtualTimerRef.current);
+    contaAtualTimerRef.current = setTimeout(async () => {
+      try {
+        await gcUpsertOne(session, "conta_atual", next);
+        gcClearPendingWrite("conta_atual", "atual", "upsert");
+      } catch (err) { console.error(err); setError(gcWriteErrorMsg(err, "salvar a conta")); }
+    }, 600);
+  };
+
+  // Arquiva o rascunho atual como uma entrada nova do histórico (total
+  // congelado no momento do fechamento, não recalculado depois) e reseta o
+  // rascunho pra uma conta nova.
+  const fecharConta = async () => {
+    const base = gcContaBase(contaAtual.itens, parseFloat(String(contaAtual.totalManual).replace(",", ".")) || 0);
+    const taxa = gcContaTaxa(base, contaAtual.comTaxa, contaAtual.taxaPct);
+    const total = gcContaTotal(base, taxa);
+    const snapshot = {
+      id: uid(), itens: contaAtual.itens, comTaxa: contaAtual.comTaxa, taxaPct: contaAtual.taxaPct,
+      pessoas: contaAtual.pessoas, totalManual: contaAtual.totalManual, total, fechadoEm: Date.now(),
+    };
+    setContasSalvas(prev => [...prev, snapshot]);
+    if (!GC_IS_LOCAL) {
+      gcQueuePendingWrite({ colecao: "contas_salvas", id: snapshot.id, kind: "upsert", data: snapshot });
+      try {
+        await gcUpsertOne(session, "contas_salvas", snapshot);
+        gcClearPendingWrite("contas_salvas", snapshot.id, "upsert");
+      } catch (err) { console.error(err); setError(gcWriteErrorMsg(err, "salvar o histórico da conta")); }
+    }
+    saveContaAtual({ itens: [], totalManual: "", comTaxa: true, taxaPct: "10", pessoas: "1" });
+    return true;
+  };
+
   const saveTrip = async (trip) => {
     setTrips(prev => prev.some(t => t.id === trip.id) ? prev.map(t => t.id === trip.id ? trip : t) : [...prev, trip]);
     if (GC_IS_LOCAL) return true;
@@ -1625,7 +1704,7 @@ function useGcData(session) {
 
   return {
     expenseCategories, incomeSources, incomeEntries, incomeProjections, expenseTemplates, expenseInstances, investmentSnapshots, wishlistItems, wishlistSavingsSnapshots,
-    trips, tripExpenses, cardSettings,
+    trips, tripExpenses, cardSettings, contaAtual, contasSalvas,
     loading, error, dismissError: () => setError(null),
     saveExpenseCategory, reorderExpenseCategories, deleteExpenseCategory,
     saveIncomeSource, deleteIncomeSource, saveIncomeEntry, deleteIncomeEntry, saveIncomeProjection,
@@ -1634,6 +1713,7 @@ function useGcData(session) {
     saveWishlistSavingsSnapshot, deleteWishlistSavingsSnapshot,
     saveTrip, deleteTrip, saveTripExpense, deleteTripExpense,
     saveCard, deleteCard,
+    saveContaAtual, fecharConta,
   };
 }
 
@@ -3816,13 +3896,15 @@ function GcDashboard({ incomeEntries, expenseInstances, investmentSnapshots, wis
 }
 
 /* ---------------------------------------------------------------
-   TELA: CONTA (bar/restaurante) — calculadora de sessão (some ao
-   recarregar). Itens mandam sobre o total manual; taxa opcional
+   TELA: CONTA (bar/restaurante) — rascunho com autosave (ver
+   useGcData > saveContaAtual/fecharConta) + histórico de contas
+   fechadas. Itens mandam sobre o total manual; taxa opcional
    (default 10%, % editável); divisão igual pelo nº de pessoas.
 ----------------------------------------------------------------*/
 function GcConta({
   itens, setItens, totalManual, setTotalManual, comTaxa, setComTaxa,
   taxaPct, setTaxaPct, pessoas, setPessoas, itemForm, setItemForm,
+  subTab, setSubTab, historico, onFecharConta,
 }) {
   const temItens = itens.length > 0;
   const base = gcContaBase(itens, parseFloat(String(totalManual).replace(",", ".")) || 0);
@@ -3830,6 +3912,7 @@ function GcConta({
   const total = gcContaTotal(base, taxa);
   const nPessoas = Math.max(1, parseInt(pessoas, 10) || 1);
   const porPessoa = gcContaPorPessoa(total, nPessoas);
+  const historicoOrdenado = (historico || []).slice().sort((a, b) => (b.fechadoEm || 0) - (a.fechadoEm || 0));
 
   const saveItem = (item) => {
     setItens(prev => {
@@ -3846,6 +3929,28 @@ function GcConta({
 
   return (
     <div className="gc-screen">
+      <TabBar
+        options={[{ value: "conta", label: "Conta" }, { value: "historico", label: "Histórico" }]}
+        value={subTab}
+        onChange={setSubTab}
+        ariaLabel="Sub-abas da Conta"
+      />
+
+      {subTab === "historico" ? (
+        historicoOrdenado.length === 0 ? (
+          <EmptyState icon={<Utensils size={40} />} title="Nenhuma conta fechada ainda" message="Toque em “Fechar conta” na aba Conta pra guardar a conta atual aqui." />
+        ) : (
+          <div className="gc-list">
+            {historicoOrdenado.map(h => (
+              <div className="gc-list-row" key={h.id}>
+                <span className="gc-list-row-title" style={{ flex: 1 }}>{new Date(h.fechadoEm).toLocaleDateString("pt-BR")}</span>
+                <span className="gc-row-valor-display gc-money">{gcFmtMoney(h.total)}</span>
+              </div>
+            ))}
+          </div>
+        )
+      ) : (
+        <>
       <div className={"gc-statcards" + (nPessoas > 1 ? " gc-statcards-2" : " gc-statcards-1")}>
         <div className="gc-statcard">
           <span className="gc-statcard-num gc-money">{gcFmtMoney(total)}</span>
@@ -3954,6 +4059,16 @@ function GcConta({
         </div>
       )}
 
+      {(temItens || total > 0) && (
+        <button type="button" className="lb-btn primary gc-conta-fechar"
+          onClick={async () => {
+            if (!confirm("Fechar esta conta e começar uma nova? Ela vai pro Histórico.")) return;
+            await onFecharConta();
+          }}>
+          Fechar conta
+        </button>
+      )}
+
       {itemForm && (
         <GcContaItemForm
           initial={itemForm.initial}
@@ -3961,6 +4076,8 @@ function GcConta({
           onDelete={deleteItem}
           onClose={() => setItemForm(null)}
         />
+      )}
+        </>
       )}
     </div>
   );
@@ -4371,7 +4488,7 @@ function gcReceitasDefaultCompetencia(ano) {
 function App({ session }) {
   const {
     expenseCategories, incomeSources, incomeEntries, expenseTemplates, expenseInstances, investmentSnapshots, wishlistItems, wishlistSavingsSnapshots,
-    trips, tripExpenses, cardSettings,
+    trips, tripExpenses, cardSettings, contaAtual, contasSalvas,
     loading, error, dismissError,
     saveExpenseCategory, reorderExpenseCategories, deleteExpenseCategory,
     saveIncomeSource, deleteIncomeSource, saveIncomeEntry, saveIncomeProjection,
@@ -4380,6 +4497,7 @@ function App({ session }) {
     saveWishlistSavingsSnapshot, deleteWishlistSavingsSnapshot,
     saveTrip, deleteTrip, saveTripExpense, deleteTripExpense,
     saveCard, deleteCard,
+    saveContaAtual, fecharConta,
   } = useGcData(session);
   // (deleteIncomeEntry existe no hook, ainda sem UI que remova um lançamento
   // pontual — fica pra quando a tela de Receitas ganhar essa ação.)
@@ -4413,12 +4531,22 @@ function App({ session }) {
   const [sonhosFabMenu, setSonhosFabMenu] = useState(false);
   const [topbarFilterOpen, setTopbarFilterOpen] = useState(false);
   const [categoriesModal, setCategoriesModal] = useState(false);
-  const [contaItens, setContaItens] = useState([]);
-  const [contaTotalManual, setContaTotalManual] = useState("");
-  const [contaComTaxa, setContaComTaxa] = useState(true);
-  const [contaTaxaPct, setContaTaxaPct] = useState("10");
-  const [contaPessoas, setContaPessoas] = useState("1");
   const [contaItemForm, setContaItemForm] = useState(null);
+  const [contaSubTab, setContaSubTab] = useState("conta");
+  // Setters-adaptadores: GcConta/GcContaItemForm continuam chamando
+  // setItens(prev => ...)/setComTaxa(v => !v) etc. como se fosse useState
+  // puro, mas por baixo cada chamada vira um autosave (saveContaAtual) do
+  // rascunho vindo do useGcData — ver CLAUDE.md > Modelo de dados > Conta.
+  const gcContaFieldSetter = (key) => (updater) => {
+    const current = contaAtual[key];
+    const next = typeof updater === "function" ? updater(current) : updater;
+    saveContaAtual({ [key]: next });
+  };
+  const setContaItens = gcContaFieldSetter("itens");
+  const setContaTotalManual = gcContaFieldSetter("totalManual");
+  const setContaComTaxa = gcContaFieldSetter("comTaxa");
+  const setContaTaxaPct = gcContaFieldSetter("taxaPct");
+  const setContaPessoas = gcContaFieldSetter("pessoas");
 
   const handleToggleWishlistComprado = async (id) => {
     const item = wishlistItems.find(i => i.id === id);
@@ -4670,12 +4798,15 @@ function App({ session }) {
             />
           ) : subTab === "conta" ? (
             <GcConta
-              itens={contaItens} setItens={setContaItens}
-              totalManual={contaTotalManual} setTotalManual={setContaTotalManual}
-              comTaxa={contaComTaxa} setComTaxa={setContaComTaxa}
-              taxaPct={contaTaxaPct} setTaxaPct={setContaTaxaPct}
-              pessoas={contaPessoas} setPessoas={setContaPessoas}
+              itens={contaAtual.itens} setItens={setContaItens}
+              totalManual={contaAtual.totalManual} setTotalManual={setContaTotalManual}
+              comTaxa={contaAtual.comTaxa} setComTaxa={setContaComTaxa}
+              taxaPct={contaAtual.taxaPct} setTaxaPct={setContaTaxaPct}
+              pessoas={contaAtual.pessoas} setPessoas={setContaPessoas}
               itemForm={contaItemForm} setItemForm={setContaItemForm}
+              subTab={contaSubTab} setSubTab={setContaSubTab}
+              historico={contasSalvas}
+              onFecharConta={fecharConta}
             />
           ) : subTab === "viagens" ? (
             tripAberta ? (
@@ -4702,26 +4833,31 @@ function App({ session }) {
           )}
         </main>
 
-        <button type="button" className="gc-fab"
-          onClick={() => {
-            if (subTab === "dashboard") setDashboardFabMenu(true);
-            else if (subTab === "receitas") setSourceForm({ initial: null, competencia: gcReceitasDefaultCompetencia(receitasAno) });
-            else if (subTab === "despesas") {
-              if (despesasSub === "recorrencias") setTemplateForm({ initial: null });
-              else setDespesasFabMenu(true);
-            }
-            else if (subTab === "investimentos") setSnapshotForm({ initialCompetencia: competenciaAtual() });
-            else if (subTab === "cartao") setCartaoFabMenu(true);
-            else if (subTab === "sonhos") setSonhosFabMenu(true);
-            else if (subTab === "conta") setContaItemForm({ initial: null });
-            else if (subTab === "viagens") {
-              if (tripAberta) setTripExpenseForm({ initial: null });
-              else setTripForm({ initial: null });
-            }
-          }}
-          aria-label={subTab === "dashboard" ? "Adicionar" : subTab === "receitas" ? "Nova fonte de receita" : subTab === "despesas" ? (despesasSub === "recorrencias" ? "Nova recorrência" : "Nova despesa") : subTab === "investimentos" ? "Registrar saldo" : subTab === "cartao" ? "Nova despesa no cartão" : subTab === "sonhos" ? "Adicionar" : subTab === "conta" ? "Novo item da conta" : subTab === "viagens" ? (tripAberta ? "Novo gasto" : "Nova viagem") : "Adicionar"}>
-          <Plus size={26} />
-        </button>
+        {/* Escondido em Conta > Histórico: não existe ação de "criar" ali,
+            só de consultar (mesmo guard já usado em Despesas > Recorrências
+            pra trocar de ação, aqui é pra sumir de vez). */}
+        {!(subTab === "conta" && contaSubTab === "historico") && (
+          <button type="button" className="gc-fab"
+            onClick={() => {
+              if (subTab === "dashboard") setDashboardFabMenu(true);
+              else if (subTab === "receitas") setSourceForm({ initial: null, competencia: gcReceitasDefaultCompetencia(receitasAno) });
+              else if (subTab === "despesas") {
+                if (despesasSub === "recorrencias") setTemplateForm({ initial: null });
+                else setDespesasFabMenu(true);
+              }
+              else if (subTab === "investimentos") setSnapshotForm({ initialCompetencia: competenciaAtual() });
+              else if (subTab === "cartao") setCartaoFabMenu(true);
+              else if (subTab === "sonhos") setSonhosFabMenu(true);
+              else if (subTab === "conta") setContaItemForm({ initial: null });
+              else if (subTab === "viagens") {
+                if (tripAberta) setTripExpenseForm({ initial: null });
+                else setTripForm({ initial: null });
+              }
+            }}
+            aria-label={subTab === "dashboard" ? "Adicionar" : subTab === "receitas" ? "Nova fonte de receita" : subTab === "despesas" ? (despesasSub === "recorrencias" ? "Nova recorrência" : "Nova despesa") : subTab === "investimentos" ? "Registrar saldo" : subTab === "cartao" ? "Nova despesa no cartão" : subTab === "sonhos" ? "Adicionar" : subTab === "conta" ? "Novo item da conta" : subTab === "viagens" ? (tripAberta ? "Novo gasto" : "Nova viagem") : "Adicionar"}>
+            <Plus size={26} />
+          </button>
+        )}
 
         {sourceForm && (
           <GcIncomeSourceForm
@@ -5223,6 +5359,7 @@ div.gc-statcard { cursor: default; }
 .gc-conta-taxa-suffix { font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 14px; color: var(--gc-ink-soft); }
 .gc-conta-por-pessoa { border-top: 1px solid var(--gc-line); background: var(--gc-surface-2); color: var(--gc-accent); }
 .gc-conta-fields input:disabled { opacity: .55; background: var(--gc-surface-2); cursor: not-allowed; }
+.gc-conta-fechar { width: 100%; margin-top: var(--sp-3); }
 
 /* ---- Viagens: header com voltar/editar, cards de participante (saldo +
    "Disponível"), linhas de participante no formulário ---- */
