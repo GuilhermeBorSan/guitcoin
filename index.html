@@ -3870,8 +3870,19 @@ function GcConta({
               <div className="gc-list-row" key={item.id}>
                 <button type="button" className="gc-list-row-main" onClick={() => setItemForm({ initial: item })}>
                   <span className="gc-list-row-title">{item.nome}</span>
-                  {(item.quantidade || 1) > 1 && <span className="gc-pill gc-pill-muted" title="Quantidade" aria-label={`Quantidade ${item.quantidade}`}>×{item.quantidade}</span>}
                 </button>
+                <input
+                  type="number" inputMode="numeric" min="1" step="1"
+                  className="gc-row-qtd"
+                  aria-label={`Quantidade de ${item.nome}`}
+                  defaultValue={item.quantidade || 1}
+                  key={item.id + "-qtd-" + (item.quantidade || 1)}
+                  onBlur={(e) => {
+                    const q = Math.max(1, parseInt(e.target.value, 10) || 1);
+                    if (q === (item.quantidade || 1)) { e.target.value = q; return; }
+                    saveItem({ ...item, quantidade: q });
+                  }}
+                />
                 <span className="gc-row-valor-display gc-money">{gcFmtMoney(gcContaItemTotal(item))}</span>
               </div>
             ))}
@@ -5168,6 +5179,8 @@ div.gc-statcard { cursor: default; }
 .gc-row-valor:focus { outline: 1.5px solid var(--gc-accent); outline-offset: 1px; }
 .gc-row-valor-estimado { border-color: var(--gc-gold); background: color-mix(in srgb, var(--gc-gold) 14%, transparent); }
 .gc-row-valor-estimado:focus { outline-color: var(--gc-gold); }
+.gc-row-qtd { width: 52px; flex-shrink: 0; text-align: center; padding: 8px 6px; border-radius: var(--radius-pill); border: 1px solid var(--gc-line); font-size: 14px; font-weight: 600; color: var(--gc-ink); background: rgba(255,255,255,.06); }
+.gc-row-qtd:focus { outline: 1.5px solid var(--gc-accent); outline-offset: 1px; }
 .gc-list-total { display: flex; align-items: center; justify-content: space-between; padding: var(--sp-3) var(--sp-4); background: var(--gc-surface-2); font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 14.5px; }
 .gc-list-more { display: block; width: 100%; padding: var(--sp-3) var(--sp-4); border: none; border-bottom: 1px solid var(--gc-line); background: none; cursor: pointer; text-align: left; font-family: 'Space Grotesk', sans-serif; font-size: 13px; font-weight: 600; color: var(--gc-accent); }
 .gc-list-more:hover { background: var(--gc-surface-2); }
