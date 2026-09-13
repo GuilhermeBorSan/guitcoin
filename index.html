@@ -849,42 +849,79 @@ async function gcUpdateFields(session, colecao, id, fields) {
   await gcCollectionRef(session, colecao).doc(id).set(fields, { merge: true });
 }
 
-// ---- Fila de toggles pendentes em localStorage: reforço específico pro
-// checkbox de "pago"/"comprado", que o usuário costuma tocar e fechar o app
-// na sequência (ver relato: "marquei checkbox e ao reabrir a marcação
-// sumiu"). O enablePersistence do Firestore (IndexedDB) já cobre a maioria
-// dos casos, mas grava a fila de escritas pendentes de forma assíncrona —
-// se o app for morto rápido demais (troca de app no celular, aba fechada),
-// a escrita pode nunca chegar a ser enfileirada a tempo. localStorage é
-// síncrono: o valor já está em disco antes do clique terminar de
-// processar, sobrevivendo mesmo nesse caso extremo. Reaplicado sobre os
-// dados recém-carregados e reenviado a cada loadData(), só saindo da fila
-// quando o reenvio é confirmado. ----
-const GC_PENDING_TOGGLES_KEY = "gc_pending_toggles_v1";
-function gcReadPendingToggles() {
-  try { return JSON.parse(localStorage.getItem(GC_PENDING_TOGGLES_KEY) || "[]"); }
+// ---- Fila de escritas pendentes em localStorage: reforço geral pra
+// qualquer save/delete/toggle, não só pro checkbox de "pago"/"comprado"
+// (origem do mecanismo — ver relato: "marquei checkbox e ao reabrir a
+// marcação sumiu", e depois "minimizei o app e os itens já registrados
+// sumiram" pra saves em geral). O enablePersistence do Firestore
+// (IndexedDB) já cobre a maioria dos casos, mas grava a fila de escritas
+// pendentes de forma assíncrona — se o app for morto rápido demais (troca
+// de app no celular, aba fechada logo após salvar), a escrita pode nunca
+// chegar a ser enfileirada a tempo. localStorage é síncrono: o valor já
+// está em disco antes do clique/submit terminar de processar, sobrevivendo
+// mesmo nesse caso extremo. Reaplicado sobre os dados recém-carregados e
+// reenviado a cada loadData() (+ visibilitychange/pagehide, ver useEffect
+// abaixo), só saindo da fila quando o reenvio é confirmado.
+// `kind`: "merge" (um ou mais campos de um doc já existente — ex. toggle de
+// pago/comprado, ou os 3 campos de cartão copiados pra instância ao editar
+// uma recorrência — usa gcUpdateFields; `field` é só a chave de dedupe,
+// `value`/`fields` é o que de fato é gravado), "upsert" (documento inteiro,
+// ex. criar/editar um item — usa gcUpsertOne), "upsertMany" (lista inteira,
+// ex. reordenar categorias — usa gcUpsertMany) ou "delete" (usa
+// gcDeleteOne). ----
+const GC_PENDING_WRITES_KEY = "gc_pending_writes_v1";
+function gcReadPendingWrites() {
+  try { return JSON.parse(localStorage.getItem(GC_PENDING_WRITES_KEY) || "[]"); }
   catch { return []; }
 }
-function gcWritePendingToggles(list) {
-  try { localStorage.setItem(GC_PENDING_TOGGLES_KEY, JSON.stringify(list)); } catch {}
+function gcWritePendingWrites(list) {
+  try { localStorage.setItem(GC_PENDING_WRITES_KEY, JSON.stringify(list)); } catch {}
 }
-function gcQueuePendingToggle(colecao, id, field, value) {
-  const list = gcReadPendingToggles().filter(p => !(p.colecao === colecao && p.id === id && p.field === field));
-  list.push({ colecao, id, field, value });
-  gcWritePendingToggles(list);
+function gcQueuePendingWrite(entry) {
+  let list = gcReadPendingWrites();
+  if (entry.kind === "merge") {
+    list = list.filter(p => !(p.colecao === entry.colecao && p.id === entry.id && p.kind === "merge" && p.field === entry.field));
+  } else if (entry.kind === "upsertMany") {
+    list = list.filter(p => !(p.colecao === entry.colecao && p.kind === "upsertMany"));
+  } else {
+    // "upsert"/"delete" mexem no documento inteiro: qualquer operação
+    // anterior pendente pra esse mesmo id (merge incluído) fica obsoleta.
+    list = list.filter(p => !(p.colecao === entry.colecao && p.id === entry.id));
+  }
+  list.push(entry);
+  gcWritePendingWrites(list);
 }
-function gcClearPendingToggle(colecao, id, field) {
-  gcWritePendingToggles(gcReadPendingToggles().filter(p => !(p.colecao === colecao && p.id === id && p.field === field)));
+function gcClearPendingWrite(colecao, id, kind, field) {
+  gcWritePendingWrites(gcReadPendingWrites().filter(p => !(p.colecao === colecao && p.id === id && p.kind === kind && (kind !== "merge" || p.field === field))));
 }
-async function gcFlushPendingToggles(session, colecoes) {
-  const pendentes = gcReadPendingToggles();
+async function gcFlushPendingWrites(session, colecoes) {
+  const pendentes = gcReadPendingWrites();
   if (!pendentes.length) return colecoes;
   const resultado = { ...colecoes };
   for (const p of pendentes) {
-    const lista = resultado[p.colecao];
-    if (lista) resultado[p.colecao] = lista.map(item => item.id === p.id ? { ...item, [p.field]: p.value } : item);
-    try { await gcUpdateFields(session, p.colecao, p.id, { [p.field]: p.value }); gcClearPendingToggle(p.colecao, p.id, p.field); }
-    catch (err) { console.error(err); }
+    try {
+      if (p.kind === "delete") {
+        await gcDeleteOne(session, p.colecao, p.id);
+        if (resultado[p.colecao]) resultado[p.colecao] = resultado[p.colecao].filter(item => item.id !== p.id);
+      } else if (p.kind === "merge") {
+        const fields = p.fields || { [p.field]: p.value };
+        await gcUpdateFields(session, p.colecao, p.id, fields);
+        if (resultado[p.colecao]) resultado[p.colecao] = resultado[p.colecao].map(item => item.id === p.id ? { ...item, ...fields } : item);
+      } else if (p.kind === "upsertMany") {
+        await gcUpsertMany(session, p.colecao, p.data);
+        if (resultado[p.colecao]) {
+          const porId = new Map(p.data.map(d => [d.id, d]));
+          resultado[p.colecao] = resultado[p.colecao].map(item => porId.get(item.id) || item);
+        }
+      } else { // "upsert"
+        await gcUpsertOne(session, p.colecao, p.data);
+        if (resultado[p.colecao]) {
+          const existe = resultado[p.colecao].some(item => item.id === p.id);
+          resultado[p.colecao] = existe ? resultado[p.colecao].map(item => item.id === p.id ? p.data : item) : [...resultado[p.colecao], p.data];
+        }
+      }
+      gcClearPendingWrite(p.colecao, p.id, p.kind, p.field);
+    } catch (err) { console.error(err); }
   }
   return resultado;
 }
@@ -1113,22 +1150,29 @@ function useGcData(session) {
           console.error(genErr);
         }
       }
-      // Reaplica (e reenvia) qualquer toggle de "pago"/"comprado" que ficou
+      // Reaplica (e reenvia) qualquer escrita (save/delete/toggle) que ficou
       // pendente em localStorage de uma sessão anterior fechada rápido
-      // demais pro Firestore ter recebido a escrita (ver gcFlushPendingToggles).
-      const reconciliado = await gcFlushPendingToggles(session, { expense_instances: instances, wishlist_items: wishlist });
-      setExpenseCategories(categoriasFinais);
-      setIncomeSources(sources);
-      setIncomeEntries(entries);
-      setIncomeProjections(projections);
-      setExpenseTemplates(templatesFinais);
+      // demais pro Firestore ter recebido a escrita (ver gcFlushPendingWrites).
+      // Passa todas as coleções: uma escrita pendente pode ser em qualquer
+      // uma delas, não só nas duas que tinham toggle.
+      const reconciliado = await gcFlushPendingWrites(session, {
+        expense_categories: categoriasFinais, income_sources: sources, income_entries: entries,
+        income_projections: projections, expense_templates: templatesFinais, expense_instances: instances,
+        investment_snapshots: snapshots, wishlist_items: wishlist, wishlist_savings_snapshots: wishSavings,
+        trips: tripsData, trip_expenses: tripExpensesData, credit_card_settings: cardSettingsData,
+      });
+      setExpenseCategories(reconciliado.expense_categories);
+      setIncomeSources(reconciliado.income_sources);
+      setIncomeEntries(reconciliado.income_entries);
+      setIncomeProjections(reconciliado.income_projections);
+      setExpenseTemplates(reconciliado.expense_templates);
       setExpenseInstances(reconciliado.expense_instances);
-      setInvestmentSnapshots(snapshots);
+      setInvestmentSnapshots(reconciliado.investment_snapshots);
       setWishlistItems(reconciliado.wishlist_items);
-      setWishlistSavingsSnapshots(wishSavings);
-      setTrips(tripsData);
-      setTripExpenses(tripExpensesData);
-      setCardSettings(gcNormalizeCards(cardSettingsData));
+      setWishlistSavingsSnapshots(reconciliado.wishlist_savings_snapshots);
+      setTrips(reconciliado.trips);
+      setTripExpenses(reconciliado.trip_expenses);
+      setCardSettings(gcNormalizeCards(reconciliado.credit_card_settings));
     } catch (err) {
       console.error(err);
       setError(gcWriteErrorMsg(err, "carregar os dados"));
@@ -1139,7 +1183,7 @@ function useGcData(session) {
 
   useEffect(() => { loadData(); }, [session]);
 
-  // Reforço extra pra fila de toggles pendentes: gcFlushPendingToggles só
+  // Reforço extra pra fila de escritas pendentes: gcFlushPendingWrites só
   // roda dentro de loadData() (mount/troca de session). Se o app só for
   // suspenso (não morto) e voltar sem remontar, uma entrada que ficou
   // pendente por um erro transitório (ex.: sem rede no momento do toque)
@@ -1148,7 +1192,7 @@ function useGcData(session) {
   // descarregar (pagehide) — best-effort, sem bloquear a navegação.
   useEffect(() => {
     if (GC_IS_LOCAL || !session) return;
-    const tentarReenviar = () => { gcFlushPendingToggles(session, {}).catch(() => {}); };
+    const tentarReenviar = () => { gcFlushPendingWrites(session, {}).catch(() => {}); };
     const onVisibility = () => { if (document.hidden) tentarReenviar(); };
     document.addEventListener("visibilitychange", onVisibility);
     window.addEventListener("pagehide", tentarReenviar);
@@ -1161,7 +1205,12 @@ function useGcData(session) {
   const saveExpenseCategory = async (categoria) => {
     setExpenseCategories(prev => prev.some(c => c.id === categoria.id) ? prev.map(c => c.id === categoria.id ? categoria : c) : [...prev, categoria]);
     if (GC_IS_LOCAL) return true;
-    try { await gcUpsertOne(session, "expense_categories", categoria); return true; }
+    gcQueuePendingWrite({ colecao: "expense_categories", id: categoria.id, kind: "upsert", data: categoria });
+    try {
+      await gcUpsertOne(session, "expense_categories", categoria);
+      gcClearPendingWrite("expense_categories", categoria.id, "upsert");
+      return true;
+    }
     catch (err) { console.error(err); setError(gcWriteErrorMsg(err, "salvar a categoria")); await loadData(); return false; }
   };
 
@@ -1172,7 +1221,12 @@ function useGcData(session) {
     const withOrdem = ordered.map((c, i) => ({ ...c, ordem: i }));
     setExpenseCategories(withOrdem);
     if (GC_IS_LOCAL) return true;
-    try { await gcUpsertMany(session, "expense_categories", withOrdem); return true; }
+    gcQueuePendingWrite({ colecao: "expense_categories", kind: "upsertMany", data: withOrdem });
+    try {
+      await gcUpsertMany(session, "expense_categories", withOrdem);
+      gcClearPendingWrite("expense_categories", undefined, "upsertMany");
+      return true;
+    }
     catch (err) { console.error(err); setError(gcWriteErrorMsg(err, "reordenar as categorias")); await loadData(); return false; }
   };
 
@@ -1184,14 +1238,24 @@ function useGcData(session) {
     if (emUso) return false;
     setExpenseCategories(prev => prev.filter(c => c.id !== id));
     if (GC_IS_LOCAL) return true;
-    try { await gcDeleteOne(session, "expense_categories", id); return true; }
+    gcQueuePendingWrite({ colecao: "expense_categories", id, kind: "delete" });
+    try {
+      await gcDeleteOne(session, "expense_categories", id);
+      gcClearPendingWrite("expense_categories", id, "delete");
+      return true;
+    }
     catch (err) { console.error(err); setError(gcWriteErrorMsg(err, "excluir a categoria")); await loadData(); return false; }
   };
 
   const saveIncomeSource = async (source) => {
     setIncomeSources(prev => prev.some(s => s.id === source.id) ? prev.map(s => s.id === source.id ? source : s) : [...prev, source]);
     if (GC_IS_LOCAL) return true;
-    try { await gcUpsertOne(session, "income_sources", source); return true; }
+    gcQueuePendingWrite({ colecao: "income_sources", id: source.id, kind: "upsert", data: source });
+    try {
+      await gcUpsertOne(session, "income_sources", source);
+      gcClearPendingWrite("income_sources", source.id, "upsert");
+      return true;
+    }
     catch (err) { console.error(err); setError(gcWriteErrorMsg(err, "salvar a fonte de receita")); await loadData(); return false; }
   };
 
@@ -1199,28 +1263,48 @@ function useGcData(session) {
     setIncomeSources(prev => prev.filter(s => s.id !== id));
     setIncomeEntries(prev => prev.filter(e => e.sourceId !== id));
     if (GC_IS_LOCAL) return true;
-    try { await gcDeleteOne(session, "income_sources", id); return true; }
+    gcQueuePendingWrite({ colecao: "income_sources", id, kind: "delete" });
+    try {
+      await gcDeleteOne(session, "income_sources", id);
+      gcClearPendingWrite("income_sources", id, "delete");
+      return true;
+    }
     catch (err) { console.error(err); setError(gcWriteErrorMsg(err, "excluir a fonte de receita")); await loadData(); return false; }
   };
 
   const saveIncomeEntry = async (entry) => {
     setIncomeEntries(prev => prev.some(e => e.id === entry.id) ? prev.map(e => e.id === entry.id ? entry : e) : [...prev, entry]);
     if (GC_IS_LOCAL) return true;
-    try { await gcUpsertOne(session, "income_entries", entry); return true; }
+    gcQueuePendingWrite({ colecao: "income_entries", id: entry.id, kind: "upsert", data: entry });
+    try {
+      await gcUpsertOne(session, "income_entries", entry);
+      gcClearPendingWrite("income_entries", entry.id, "upsert");
+      return true;
+    }
     catch (err) { console.error(err); setError(gcWriteErrorMsg(err, "salvar a receita do mês")); await loadData(); return false; }
   };
 
   const deleteIncomeEntry = async (id) => {
     setIncomeEntries(prev => prev.filter(e => e.id !== id));
     if (GC_IS_LOCAL) return true;
-    try { await gcDeleteOne(session, "income_entries", id); return true; }
+    gcQueuePendingWrite({ colecao: "income_entries", id, kind: "delete" });
+    try {
+      await gcDeleteOne(session, "income_entries", id);
+      gcClearPendingWrite("income_entries", id, "delete");
+      return true;
+    }
     catch (err) { console.error(err); setError(gcWriteErrorMsg(err, "excluir a receita do mês")); await loadData(); return false; }
   };
 
   const saveIncomeProjection = async (projection) => {
     setIncomeProjections(prev => prev.some(p => p.id === projection.id) ? prev.map(p => p.id === projection.id ? projection : p) : [...prev, projection]);
     if (GC_IS_LOCAL) return true;
-    try { await gcUpsertOne(session, "income_projections", projection); return true; }
+    gcQueuePendingWrite({ colecao: "income_projections", id: projection.id, kind: "upsert", data: projection });
+    try {
+      await gcUpsertOne(session, "income_projections", projection);
+      gcClearPendingWrite("income_projections", projection.id, "upsert");
+      return true;
+    }
     catch (err) { console.error(err); setError(gcWriteErrorMsg(err, "salvar a projeção")); await loadData(); return false; }
   };
 
@@ -1257,11 +1341,23 @@ function useGcData(session) {
     }
 
     if (GC_IS_LOCAL) return true;
+    gcQueuePendingWrite({ colecao: "expense_templates", id: t.id, kind: "upsert", data: t });
+    // "novas" (instâncias geradas pela recorrência) não precisam de fila
+    // própria: são recalculadas de forma determinística por
+    // gcGenerateMissingInstances a cada loadData(), a partir do próprio
+    // template — se sumirem, reaparecem sozinhas assim que o template
+    // salvar. "paraAtualizar" é dado editado de verdade (não recalculável),
+    // por isso cada uma entra na fila.
+    paraAtualizar.forEach(i => gcQueuePendingWrite({ colecao: "expense_instances", id: i.id, kind: "merge", field: "__cartao__", fields: camposCartao }));
     try {
       await gcUpsertOne(session, "expense_templates", t);
+      gcClearPendingWrite("expense_templates", t.id, "upsert");
       if (novas.length) await gcUpsertMany(session, "expense_instances", novas);
       if (paraAtualizar.length) {
-        await Promise.all(paraAtualizar.map(i => gcUpdateFields(session, "expense_instances", i.id, camposCartao)));
+        await Promise.all(paraAtualizar.map(async i => {
+          await gcUpdateFields(session, "expense_instances", i.id, camposCartao);
+          gcClearPendingWrite("expense_instances", i.id, "merge", "__cartao__");
+        }));
       }
       return true;
     }
@@ -1276,9 +1372,15 @@ function useGcData(session) {
     const orfas = expenseInstances.filter(i => i.templateId === id);
     setExpenseInstances(prev => prev.map(i => i.templateId === id ? { ...i, templateId: null } : i));
     if (GC_IS_LOCAL) return true;
+    gcQueuePendingWrite({ colecao: "expense_templates", id, kind: "delete" });
+    orfas.forEach(i => gcQueuePendingWrite({ colecao: "expense_instances", id: i.id, kind: "merge", field: "templateId", value: null }));
     try {
       await gcDeleteOne(session, "expense_templates", id);
-      await Promise.all(orfas.map(i => gcUpdateFields(session, "expense_instances", i.id, { templateId: null })));
+      gcClearPendingWrite("expense_templates", id, "delete");
+      await Promise.all(orfas.map(async i => {
+        await gcUpdateFields(session, "expense_instances", i.id, { templateId: null });
+        gcClearPendingWrite("expense_instances", i.id, "merge", "templateId");
+      }));
       return true;
     } catch (err) {
       console.error(err); setError(gcWriteErrorMsg(err, "excluir a recorrência")); await loadData(); return false;
@@ -1288,14 +1390,24 @@ function useGcData(session) {
   const saveExpenseInstance = async (inst) => {
     setExpenseInstances(prev => prev.some(i => i.id === inst.id) ? prev.map(i => i.id === inst.id ? inst : i) : [...prev, inst]);
     if (GC_IS_LOCAL) return true;
-    try { await gcUpsertOne(session, "expense_instances", inst); return true; }
+    gcQueuePendingWrite({ colecao: "expense_instances", id: inst.id, kind: "upsert", data: inst });
+    try {
+      await gcUpsertOne(session, "expense_instances", inst);
+      gcClearPendingWrite("expense_instances", inst.id, "upsert");
+      return true;
+    }
     catch (err) { console.error(err); setError(gcWriteErrorMsg(err, "salvar a despesa")); await loadData(); return false; }
   };
 
   const deleteExpenseInstance = async (id) => {
     setExpenseInstances(prev => prev.filter(i => i.id !== id));
     if (GC_IS_LOCAL) return true;
-    try { await gcDeleteOne(session, "expense_instances", id); return true; }
+    gcQueuePendingWrite({ colecao: "expense_instances", id, kind: "delete" });
+    try {
+      await gcDeleteOne(session, "expense_instances", id);
+      gcClearPendingWrite("expense_instances", id, "delete");
+      return true;
+    }
     catch (err) { console.error(err); setError(gcWriteErrorMsg(err, "excluir a despesa")); await loadData(); return false; }
   };
 
@@ -1305,11 +1417,11 @@ function useGcData(session) {
     console.log("[gc-toggle] expense_instances", id, "otimista aplicado, pago=", next && next.pago);
     if (GC_IS_LOCAL) return true;
     if (!next) return false;
-    gcQueuePendingToggle("expense_instances", id, "pago", next.pago);
+    gcQueuePendingWrite({ colecao: "expense_instances", id, kind: "merge", field: "pago", value: next.pago });
     console.log("[gc-toggle] expense_instances", id, "enfileirado no localStorage");
     try {
       await gcUpdateFields(session, "expense_instances", id, { pago: next.pago });
-      gcClearPendingToggle("expense_instances", id, "pago");
+      gcClearPendingWrite("expense_instances", id, "merge", "pago");
       console.log("[gc-toggle] expense_instances", id, "escrita confirmada, removido da fila");
       return true;
     } catch (err) {
@@ -1321,28 +1433,48 @@ function useGcData(session) {
   const saveInvestmentSnapshot = async (snapshot) => {
     setInvestmentSnapshots(prev => prev.some(s => s.id === snapshot.id) ? prev.map(s => s.id === snapshot.id ? snapshot : s) : [...prev, snapshot]);
     if (GC_IS_LOCAL) return true;
-    try { await gcUpsertOne(session, "investment_snapshots", snapshot); return true; }
+    gcQueuePendingWrite({ colecao: "investment_snapshots", id: snapshot.id, kind: "upsert", data: snapshot });
+    try {
+      await gcUpsertOne(session, "investment_snapshots", snapshot);
+      gcClearPendingWrite("investment_snapshots", snapshot.id, "upsert");
+      return true;
+    }
     catch (err) { console.error(err); setError(gcWriteErrorMsg(err, "salvar o saldo")); await loadData(); return false; }
   };
 
   const deleteInvestmentSnapshot = async (id) => {
     setInvestmentSnapshots(prev => prev.filter(s => s.id !== id));
     if (GC_IS_LOCAL) return true;
-    try { await gcDeleteOne(session, "investment_snapshots", id); return true; }
+    gcQueuePendingWrite({ colecao: "investment_snapshots", id, kind: "delete" });
+    try {
+      await gcDeleteOne(session, "investment_snapshots", id);
+      gcClearPendingWrite("investment_snapshots", id, "delete");
+      return true;
+    }
     catch (err) { console.error(err); setError(gcWriteErrorMsg(err, "excluir o saldo")); await loadData(); return false; }
   };
 
   const saveWishlistItem = async (item) => {
     setWishlistItems(prev => prev.some(i => i.id === item.id) ? prev.map(i => i.id === item.id ? item : i) : [...prev, item]);
     if (GC_IS_LOCAL) return true;
-    try { await gcUpsertOne(session, "wishlist_items", item); return true; }
+    gcQueuePendingWrite({ colecao: "wishlist_items", id: item.id, kind: "upsert", data: item });
+    try {
+      await gcUpsertOne(session, "wishlist_items", item);
+      gcClearPendingWrite("wishlist_items", item.id, "upsert");
+      return true;
+    }
     catch (err) { console.error(err); setError(gcWriteErrorMsg(err, "salvar o item")); await loadData(); return false; }
   };
 
   const deleteWishlistItem = async (id) => {
     setWishlistItems(prev => prev.filter(i => i.id !== id));
     if (GC_IS_LOCAL) return true;
-    try { await gcDeleteOne(session, "wishlist_items", id); return true; }
+    gcQueuePendingWrite({ colecao: "wishlist_items", id, kind: "delete" });
+    try {
+      await gcDeleteOne(session, "wishlist_items", id);
+      gcClearPendingWrite("wishlist_items", id, "delete");
+      return true;
+    }
     catch (err) { console.error(err); setError(gcWriteErrorMsg(err, "excluir o item")); await loadData(); return false; }
   };
 
@@ -1352,11 +1484,11 @@ function useGcData(session) {
     console.log("[gc-toggle] wishlist_items", id, "otimista aplicado, comprado=", next && next.comprado);
     if (GC_IS_LOCAL) return true;
     if (!next) return false;
-    gcQueuePendingToggle("wishlist_items", id, "comprado", next.comprado);
+    gcQueuePendingWrite({ colecao: "wishlist_items", id, kind: "merge", field: "comprado", value: next.comprado });
     console.log("[gc-toggle] wishlist_items", id, "enfileirado no localStorage");
     try {
       await gcUpdateFields(session, "wishlist_items", id, { comprado: next.comprado });
-      gcClearPendingToggle("wishlist_items", id, "comprado");
+      gcClearPendingWrite("wishlist_items", id, "merge", "comprado");
       console.log("[gc-toggle] wishlist_items", id, "escrita confirmada, removido da fila");
       return true;
     } catch (err) {
@@ -1368,21 +1500,36 @@ function useGcData(session) {
   const saveWishlistSavingsSnapshot = async (snapshot) => {
     setWishlistSavingsSnapshots(prev => prev.some(s => s.id === snapshot.id) ? prev.map(s => s.id === snapshot.id ? snapshot : s) : [...prev, snapshot]);
     if (GC_IS_LOCAL) return true;
-    try { await gcUpsertOne(session, "wishlist_savings_snapshots", snapshot); return true; }
+    gcQueuePendingWrite({ colecao: "wishlist_savings_snapshots", id: snapshot.id, kind: "upsert", data: snapshot });
+    try {
+      await gcUpsertOne(session, "wishlist_savings_snapshots", snapshot);
+      gcClearPendingWrite("wishlist_savings_snapshots", snapshot.id, "upsert");
+      return true;
+    }
     catch (err) { console.error(err); setError(gcWriteErrorMsg(err, "salvar a poupança de sonhos")); await loadData(); return false; }
   };
 
   const deleteWishlistSavingsSnapshot = async (id) => {
     setWishlistSavingsSnapshots(prev => prev.filter(s => s.id !== id));
     if (GC_IS_LOCAL) return true;
-    try { await gcDeleteOne(session, "wishlist_savings_snapshots", id); return true; }
+    gcQueuePendingWrite({ colecao: "wishlist_savings_snapshots", id, kind: "delete" });
+    try {
+      await gcDeleteOne(session, "wishlist_savings_snapshots", id);
+      gcClearPendingWrite("wishlist_savings_snapshots", id, "delete");
+      return true;
+    }
     catch (err) { console.error(err); setError(gcWriteErrorMsg(err, "excluir o saldo da poupança")); await loadData(); return false; }
   };
 
   const saveTrip = async (trip) => {
     setTrips(prev => prev.some(t => t.id === trip.id) ? prev.map(t => t.id === trip.id ? trip : t) : [...prev, trip]);
     if (GC_IS_LOCAL) return true;
-    try { await gcUpsertOne(session, "trips", trip); return true; }
+    gcQueuePendingWrite({ colecao: "trips", id: trip.id, kind: "upsert", data: trip });
+    try {
+      await gcUpsertOne(session, "trips", trip);
+      gcClearPendingWrite("trips", trip.id, "upsert");
+      return true;
+    }
     catch (err) { console.error(err); setError(gcWriteErrorMsg(err, "salvar a viagem")); await loadData(); return false; }
   };
 
@@ -1394,9 +1541,15 @@ function useGcData(session) {
     setTrips(prev => prev.filter(t => t.id !== id));
     setTripExpenses(prev => prev.filter(e => e.tripId !== id));
     if (GC_IS_LOCAL) return true;
+    gcQueuePendingWrite({ colecao: "trips", id, kind: "delete" });
+    gastos.forEach(e => gcQueuePendingWrite({ colecao: "trip_expenses", id: e.id, kind: "delete" }));
     try {
       await gcDeleteOne(session, "trips", id);
-      await Promise.all(gastos.map(e => gcDeleteOne(session, "trip_expenses", e.id)));
+      gcClearPendingWrite("trips", id, "delete");
+      await Promise.all(gastos.map(async e => {
+        await gcDeleteOne(session, "trip_expenses", e.id);
+        gcClearPendingWrite("trip_expenses", e.id, "delete");
+      }));
       return true;
     } catch (err) {
       console.error(err); setError(gcWriteErrorMsg(err, "excluir a viagem")); await loadData(); return false;
@@ -1406,14 +1559,24 @@ function useGcData(session) {
   const saveTripExpense = async (exp) => {
     setTripExpenses(prev => prev.some(e => e.id === exp.id) ? prev.map(e => e.id === exp.id ? exp : e) : [...prev, exp]);
     if (GC_IS_LOCAL) return true;
-    try { await gcUpsertOne(session, "trip_expenses", exp); return true; }
+    gcQueuePendingWrite({ colecao: "trip_expenses", id: exp.id, kind: "upsert", data: exp });
+    try {
+      await gcUpsertOne(session, "trip_expenses", exp);
+      gcClearPendingWrite("trip_expenses", exp.id, "upsert");
+      return true;
+    }
     catch (err) { console.error(err); setError(gcWriteErrorMsg(err, "salvar o gasto da viagem")); await loadData(); return false; }
   };
 
   const deleteTripExpense = async (id) => {
     setTripExpenses(prev => prev.filter(e => e.id !== id));
     if (GC_IS_LOCAL) return true;
-    try { await gcDeleteOne(session, "trip_expenses", id); return true; }
+    gcQueuePendingWrite({ colecao: "trip_expenses", id, kind: "delete" });
+    try {
+      await gcDeleteOne(session, "trip_expenses", id);
+      gcClearPendingWrite("trip_expenses", id, "delete");
+      return true;
+    }
     catch (err) { console.error(err); setError(gcWriteErrorMsg(err, "excluir o gasto da viagem")); await loadData(); return false; }
   };
 
@@ -1429,7 +1592,12 @@ function useGcData(session) {
       return gcNormalizeCards(list);
     });
     if (GC_IS_LOCAL) return true;
-    try { await gcUpsertOne(session, "credit_card_settings", novo); return true; }
+    gcQueuePendingWrite({ colecao: "credit_card_settings", id: novo.id, kind: "upsert", data: novo });
+    try {
+      await gcUpsertOne(session, "credit_card_settings", novo);
+      gcClearPendingWrite("credit_card_settings", novo.id, "upsert");
+      return true;
+    }
     catch (err) { console.error(err); setError(gcWriteErrorMsg(err, "salvar o cartão")); await loadData(); return false; }
   };
 
@@ -1442,7 +1610,12 @@ function useGcData(session) {
     }
     setCardSettings(prev => prev.filter(c => c.id !== id));
     if (GC_IS_LOCAL) return true;
-    try { await gcDeleteOne(session, "credit_card_settings", id); return true; }
+    gcQueuePendingWrite({ colecao: "credit_card_settings", id, kind: "delete" });
+    try {
+      await gcDeleteOne(session, "credit_card_settings", id);
+      gcClearPendingWrite("credit_card_settings", id, "delete");
+      return true;
+    }
     catch (err) { console.error(err); setError(gcWriteErrorMsg(err, "excluir o cartão")); await loadData(); return false; }
   };
 
