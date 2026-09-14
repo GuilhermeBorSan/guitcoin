@@ -172,6 +172,22 @@ function gcContaPorPessoa(total, pessoas) {
   const n = Math.max(1, parseInt(pessoas, 10) || 1);
   return (total || 0) / n;
 }
+// Docs antigos sem `modo`: infere pelo que já está no rascunho.
+function gcContaModo(conta) {
+  if (!conta) return "";
+  if (conta.modo === "itens" || conta.modo === "total") return conta.modo;
+  if ((conta.itens || []).length) return "itens";
+  if (String(conta.totalManual || "").trim()) return "total";
+  return "";
+}
+const GC_CONTA_PAGADORES = [
+  { value: "gui", label: "Gui" },
+  { value: "bruno", label: "Bruno" },
+];
+function gcContaPagoPorLabel(pagoPor) {
+  const found = GC_CONTA_PAGADORES.find(p => p.value === pagoPor);
+  return found ? found.label : "";
+}
 
 // ---- Fórmulas de Receita (funções puras, sem React/Firebase) ----
 function gcFindIncomeEntry(entries, sourceId, competencia) {
@@ -1049,7 +1065,7 @@ const GC_DEMO_DATA = {
   // Conta (bar/restaurante): rascunho em andamento (autosave) + 1 conta já
   // fechada no histórico, pra exercitar as duas sub-abas no modo demo.
   contaAtual: {
-    id: "atual", comTaxa: true, taxaPct: "10", pessoas: "2", totalManual: "", atualizadoEm: Date.now(),
+    id: "atual", local: "", modo: "itens", comTaxa: true, taxaPct: "10", pessoas: "2", totalManual: "", atualizadoEm: Date.now(),
     itens: [
       { id: "demo-conta-item-1", nome: "Chopp", valor: 12, quantidade: 4 },
       { id: "demo-conta-item-2", nome: "Burger", valor: 35, quantidade: 2 },
@@ -1057,7 +1073,7 @@ const GC_DEMO_DATA = {
   },
   contasSalvas: [
     {
-      id: "demo-conta-hist-1", comTaxa: true, taxaPct: "10", pessoas: "3", totalManual: "",
+      id: "demo-conta-hist-1", local: "Pizzaria", comTaxa: true, taxaPct: "10", pessoas: "3", totalManual: "",
       itens: [
         { id: "demo-conta-hist-item-1", nome: "Pizza", valor: 60, quantidade: 2 },
         { id: "demo-conta-hist-item-2", nome: "Refrigerante", valor: 8, quantidade: 3 },
@@ -1069,7 +1085,7 @@ const GC_DEMO_DATA = {
 
 // Rascunho vazio de Conta (fora do modo demo, antes do primeiro autosave —
 // singleton, id fixo "atual", ver useGcData > saveContaAtual).
-const GC_CONTA_ATUAL_DEFAULT = { id: "atual", itens: [], totalManual: "", comTaxa: true, taxaPct: "10", pessoas: "1", atualizadoEm: null };
+const GC_CONTA_ATUAL_DEFAULT = { id: "atual", local: "", modo: "", itens: [], totalManual: "", comTaxa: true, taxaPct: "10", pessoas: "1", atualizadoEm: null };
 
 // ---- Dados (Firestore: as 14 coleções do app). Isolado aqui: as telas
 // nunca chamam gcFirestore direto, só conhecem os verbos save*/delete*/
@@ -1583,14 +1599,39 @@ function useGcData(session) {
 
   // Arquiva o rascunho atual como uma entrada nova do histórico (total
   // congelado no momento do fechamento, não recalculado depois) e reseta o
-  // rascunho pra uma conta nova.
-  const fecharConta = async () => {
-    const base = gcContaBase(contaAtual.itens, parseFloat(String(contaAtual.totalManual).replace(",", ".")) || 0);
+  // rascunho pra uma conta nova. Se o Gui pagou, lança uma despesa: no
+  // cartão (noCartao) ou em Despesas do mês (PIX/dinheiro).
+  const fecharConta = async ({ pagoPor, cardId } = {}) => {
+    const base = gcContaBase(
+      gcContaModo(contaAtual) === "itens" ? contaAtual.itens : [],
+      parseFloat(String(contaAtual.totalManual).replace(",", ".")) || 0
+    );
     const taxa = gcContaTaxa(base, contaAtual.comTaxa, contaAtual.taxaPct);
     const total = gcContaTotal(base, taxa);
+    const local = (contaAtual.local || "").trim();
+    let despesaId = null;
+    let pagamento = null;
+    const cardIdSalvo = pagoPor === "gui" && cardId ? cardId : null;
+    if (pagoPor === "gui") {
+      const noCartao = !!cardIdSalvo;
+      pagamento = noCartao ? "cartao" : "pix";
+      despesaId = uid();
+      const dia = parseInt(todayISO().slice(8, 10), 10) || null;
+      const inst = {
+        id: despesaId, templateId: null, grupo: "pessoal",
+        descricao: local || "Conta", competencia: competenciaAtual(), valor: total,
+        pago: !noCartao, compartilhado: false, compartilhadoCom: "", minhaParcelaPct: 100,
+        valorConfirmado: true, parcelaAtual: null, totalParcelas: null,
+        noCartao, diaCompra: noCartao ? dia : null, cardId: cardIdSalvo,
+        pagamentoFatura: false, faturaCardId: null, faturaCompetencia: null,
+      };
+      const okInst = await saveExpenseInstance(inst);
+      if (okInst === false) return false;
+    }
     const snapshot = {
-      id: uid(), itens: contaAtual.itens, comTaxa: contaAtual.comTaxa, taxaPct: contaAtual.taxaPct,
+      id: uid(), local, itens: contaAtual.itens, comTaxa: contaAtual.comTaxa, taxaPct: contaAtual.taxaPct,
       pessoas: contaAtual.pessoas, totalManual: contaAtual.totalManual, total, fechadoEm: Date.now(),
+      pagoPor: pagoPor || null, pagamento, cardId: cardIdSalvo, despesaId,
     };
     setContasSalvas(prev => [...prev, snapshot]);
     if (!GC_IS_LOCAL) {
@@ -1600,7 +1641,7 @@ function useGcData(session) {
         gcClearPendingWrite("contas_salvas", snapshot.id, "upsert");
       } catch (err) { console.error(err); setError(gcWriteErrorMsg(err, "salvar o histórico da conta")); }
     }
-    saveContaAtual({ itens: [], totalManual: "", comTaxa: true, taxaPct: "10", pessoas: "1" });
+    saveContaAtual({ local: "", modo: "", itens: [], totalManual: "", comTaxa: true, taxaPct: "10", pessoas: "1" });
     return true;
   };
 
@@ -3903,16 +3944,26 @@ function GcDashboard({ incomeEntries, expenseInstances, investmentSnapshots, wis
 ----------------------------------------------------------------*/
 function GcConta({
   itens, setItens, totalManual, setTotalManual, comTaxa, setComTaxa,
-  taxaPct, setTaxaPct, pessoas, setPessoas, itemForm, setItemForm,
-  subTab, setSubTab, historico, onFecharConta,
+  taxaPct, setTaxaPct, pessoas, setPessoas, local, setLocal, modo, onSwitchModo,
+  itemForm, setItemForm, subTab, setSubTab, historico, onFecharConta, cards,
 }) {
   const temItens = itens.length > 0;
-  const base = gcContaBase(itens, parseFloat(String(totalManual).replace(",", ".")) || 0);
+  const modoAtivo = gcContaModo({ modo, itens, totalManual });
+  const base = gcContaBase(modoAtivo === "itens" ? itens : [], parseFloat(String(totalManual).replace(",", ".")) || 0);
   const taxa = gcContaTaxa(base, comTaxa, taxaPct);
   const total = gcContaTotal(base, taxa);
   const nPessoas = Math.max(1, parseInt(pessoas, 10) || 1);
   const porPessoa = gcContaPorPessoa(total, nPessoas);
   const historicoOrdenado = (historico || []).slice().sort((a, b) => (b.fechadoEm || 0) - (a.fechadoEm || 0));
+  const totalInputRef = useRef(null);
+  const prevModoRef = useRef(modoAtivo);
+  const [fecharOpen, setFecharOpen] = useState(false);
+  useEffect(() => {
+    if (modoAtivo === "total" && prevModoRef.current !== "total" && totalInputRef.current) {
+      totalInputRef.current.focus();
+    }
+    prevModoRef.current = modoAtivo;
+  }, [modoAtivo]);
 
   const saveItem = (item) => {
     setItens(prev => {
@@ -3941,12 +3992,23 @@ function GcConta({
           <EmptyState icon={<Utensils size={40} />} title="Nenhuma conta fechada ainda" message="Toque em “Fechar conta” na aba Conta pra guardar a conta atual aqui." />
         ) : (
           <div className="gc-list">
-            {historicoOrdenado.map(h => (
+            {historicoOrdenado.map(h => {
+              const data = h.fechadoEm ? new Date(h.fechadoEm).toLocaleDateString("pt-BR") : "";
+              const onde = (h.local || "").trim();
+              const pagoLabel = gcContaPagoPorLabel(h.pagoPor);
+              const cartaoNome = h.pagoPor === "gui" && h.cardId ? (gcCardNome(cards, h.cardId) || "") : "";
+              const pagoTxt = pagoLabel ? (cartaoNome ? `${pagoLabel} · ${cartaoNome}` : pagoLabel) : "";
+              const sub = [data, pagoTxt].filter(Boolean).join(" · ");
+              return (
               <div className="gc-list-row" key={h.id}>
-                <span className="gc-list-row-title" style={{ flex: 1 }}>{new Date(h.fechadoEm).toLocaleDateString("pt-BR")}</span>
+                <span className="gc-list-row-title gc-list-row-grow" style={{ flex: 1 }}>
+                  <span className="gc-list-row-title-line"><span>{onde || data}</span></span>
+                  {onde ? (sub && <small className="gc-list-row-sub">{sub}</small>) : (pagoTxt && data && <small className="gc-list-row-sub">{pagoTxt}</small>)}
+                </span>
                 <span className="gc-row-valor-display gc-money">{gcFmtMoney(h.total)}</span>
               </div>
-            ))}
+              );
+            })}
           </div>
         )
       ) : (
@@ -3964,50 +4026,79 @@ function GcConta({
         )}
       </div>
 
-      <div className="gc-group">
-        <div className="gc-group-header">
-          <span>Itens</span>
-          {temItens && <span className="gc-money">{gcFmtMoney(base)}</span>}
-        </div>
-        {temItens ? (
-          <div className="gc-list">
-            {itens.map(item => (
-              <div className="gc-list-row" key={item.id}>
-                <button type="button" className="gc-list-row-main" onClick={() => setItemForm({ initial: item })}>
-                  <span className="gc-list-row-title">{item.nome}</span>
-                </button>
-                <input
-                  type="number" inputMode="numeric" min="1" step="1"
-                  className="gc-row-qtd"
-                  aria-label={`Quantidade de ${item.nome}`}
-                  defaultValue={item.quantidade || 1}
-                  key={item.id + "-qtd-" + (item.quantidade || 1)}
-                  onBlur={(e) => {
-                    const q = Math.max(1, parseInt(e.target.value, 10) || 1);
-                    if (q === (item.quantidade || 1)) { e.target.value = q; return; }
-                    saveItem({ ...item, quantidade: q });
-                  }}
-                />
-                <span className="gc-row-valor-display gc-money">{gcFmtMoney(gcContaItemTotal(item))}</span>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <p className="lb-hint gc-conta-hint">Toque no + pra adicionar o que você consumiu, ou informe o total da conta abaixo.</p>
-        )}
-      </div>
-
       <div className="gc-conta-fields">
-        <Field label="Total da conta" wide>
+        <Field label="Onde" wide>
           <input
-            type="text" inputMode="decimal" min="0"
-            value={totalManual}
-            onChange={e => setTotalManual(e.target.value)}
-            disabled={temItens}
-            placeholder={temItens ? "Usando soma dos itens" : "0,00"}
+            type="text"
+            value={local || ""}
+            onChange={e => setLocal(e.target.value)}
+            placeholder="Bar, restaurante…"
           />
         </Field>
-        {temItens && <p className="lb-hint gc-conta-hint-left">Limpe os itens pra usar o total da conta.</p>}
+      </div>
+
+      {modoAtivo === "" && (
+        <p className="lb-hint gc-conta-hint">Toque no + pra começar.</p>
+      )}
+
+      {modoAtivo === "itens" && (
+        <div className="gc-group">
+          <div className="gc-group-header">
+            <span>Itens</span>
+            {temItens && <span className="gc-money">{gcFmtMoney(base)}</span>}
+          </div>
+          {temItens ? (
+            <div className="gc-list">
+              {itens.map(item => (
+                <div className="gc-list-row" key={item.id}>
+                  <button type="button" className="gc-list-row-main" onClick={() => setItemForm({ initial: item })}>
+                    <span className="gc-list-row-title">{item.nome}</span>
+                  </button>
+                  <input
+                    type="number" inputMode="numeric" min="1" step="1"
+                    className="gc-row-qtd"
+                    aria-label={`Quantidade de ${item.nome}`}
+                    defaultValue={item.quantidade || 1}
+                    key={item.id + "-qtd-" + (item.quantidade || 1)}
+                    onBlur={(e) => {
+                      const q = Math.max(1, parseInt(e.target.value, 10) || 1);
+                      if (q === (item.quantidade || 1)) { e.target.value = q; return; }
+                      saveItem({ ...item, quantidade: q });
+                    }}
+                  />
+                  <span className="gc-row-valor-display gc-money">{gcFmtMoney(gcContaItemTotal(item))}</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="lb-hint gc-conta-hint">Toque no + pra adicionar o que você consumiu.</p>
+          )}
+          <button type="button" className="gc-conta-switch" onClick={() => {
+            if (temItens && !confirm("Isso apaga os itens lançados. Continuar?")) return;
+            onSwitchModo("total");
+          }}>Prefiro informar só o total</button>
+        </div>
+      )}
+
+      <div className="gc-conta-fields">
+        {modoAtivo === "total" && (
+          <>
+            <Field label="Total da conta" wide>
+              <input
+                ref={totalInputRef}
+                type="text" inputMode="decimal" min="0"
+                value={totalManual}
+                onChange={e => setTotalManual(e.target.value)}
+                placeholder="0,00"
+              />
+            </Field>
+            <button type="button" className="gc-conta-switch" onClick={() => {
+              if (String(totalManual || "").trim() && !confirm("Isso apaga o total informado. Continuar?")) return;
+              onSwitchModo("itens");
+              setItemForm({ initial: null });
+            }}>Prefiro lançar item a item</button>
+          </>
+        )}
 
         <div className="gc-conta-taxa-row">
           <GcCheckbox
@@ -4061,12 +4152,21 @@ function GcConta({
 
       {(temItens || total > 0) && (
         <button type="button" className="lb-btn primary gc-conta-fechar"
-          onClick={async () => {
-            if (!confirm("Fechar esta conta e começar uma nova? Ela vai pro Histórico.")) return;
-            await onFecharConta();
-          }}>
+          onClick={() => setFecharOpen(true)}>
           Fechar conta
         </button>
+      )}
+
+      {fecharOpen && (
+        <GcFecharContaModal
+          local={local}
+          total={total}
+          porPessoa={porPessoa}
+          nPessoas={nPessoas}
+          cards={cards}
+          onConfirm={onFecharConta}
+          onClose={() => setFecharOpen(false)}
+        />
       )}
 
       {itemForm && (
@@ -4132,6 +4232,79 @@ function GcContaItemForm({ initial, onSave, onDelete, onClose }) {
             <div className="lb-form-actions-right">
               <button type="button" className="lb-btn ghost" onClick={onClose}>Cancelar</button>
               <button type="submit" className="lb-btn primary">Salvar</button>
+            </div>
+          </div>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function GcFecharContaModal({ local, total, porPessoa, nPessoas, cards, onConfirm, onClose }) {
+  const cardsList = gcNormalizeCards(cards);
+  const [pagoPor, setPagoPor] = useState("gui");
+  const [pagamento, setPagamento] = useState("pix");
+  const [busy, setBusy] = useState(false);
+  const pagamentoOptions = [{ value: "pix", label: "PIX / dinheiro" }].concat(
+    cardsList.map(c => ({ value: c.id, label: c.nome }))
+  );
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setBusy(true);
+    const cardId = pagoPor === "gui" && pagamento !== "pix" ? pagamento : null;
+    const ok = await onConfirm({ pagoPor, cardId });
+    setBusy(false);
+    if (ok !== false) onClose();
+  };
+
+  return (
+    <Modal title="Fechar conta" onClose={onClose}>
+      <form onSubmit={submit} className="lb-form-grid">
+        <div className="gc-list">
+          {!!(local || "").trim() && (
+            <div className="gc-list-row">
+              <span className="gc-list-row-title">Onde</span>
+              <span className="gc-row-valor-display">{(local || "").trim()}</span>
+            </div>
+          )}
+          <div className="gc-list-row">
+            <span className="gc-list-row-title">Total</span>
+            <span className="gc-row-valor-display gc-money">{gcFmtMoney(total)}</span>
+          </div>
+          {nPessoas > 1 && (
+            <div className="gc-list-row">
+              <span className="gc-list-row-title">Por pessoa</span>
+              <span className="gc-row-valor-display gc-money">{gcFmtMoney(porPessoa)}</span>
+            </div>
+          )}
+        </div>
+        <Field label="Quem pagou" wide>
+          <Segmented
+            options={GC_CONTA_PAGADORES}
+            value={pagoPor}
+            onChange={setPagoPor}
+            pairs
+            ariaLabel="Quem pagou a conta"
+          />
+        </Field>
+        {pagoPor === "gui" && (
+          <Field label="Como pagou" wide>
+            <Segmented
+              options={pagamentoOptions}
+              value={pagamento}
+              onChange={setPagamento}
+              wrap
+              ariaLabel="Como o Gui pagou"
+            />
+          </Field>
+        )}
+        <div className="lb-form-footer">
+          <div className="lb-form-actions">
+            <div className="lb-form-actions-left" />
+            <div className="lb-form-actions-right">
+              <button type="button" className="lb-btn ghost" onClick={onClose} disabled={busy}>Cancelar</button>
+              <button type="submit" className="lb-btn primary" disabled={busy}>{busy ? "Fechando..." : "Fechar conta"}</button>
             </div>
           </div>
         </div>
@@ -4533,6 +4706,7 @@ function App({ session }) {
   const [categoriesModal, setCategoriesModal] = useState(false);
   const [contaItemForm, setContaItemForm] = useState(null);
   const [contaSubTab, setContaSubTab] = useState("conta");
+  const [contaFabMenu, setContaFabMenu] = useState(false);
   // Setters-adaptadores: GcConta/GcContaItemForm continuam chamando
   // setItens(prev => ...)/setComTaxa(v => !v) etc. como se fosse useState
   // puro, mas por baixo cada chamada vira um autosave (saveContaAtual) do
@@ -4547,6 +4721,13 @@ function App({ session }) {
   const setContaComTaxa = gcContaFieldSetter("comTaxa");
   const setContaTaxaPct = gcContaFieldSetter("taxaPct");
   const setContaPessoas = gcContaFieldSetter("pessoas");
+  const setContaLocal = gcContaFieldSetter("local");
+  const switchContaModo = (next) => {
+    if (next === "total") saveContaAtual({ modo: "total", itens: [] });
+    else if (next === "itens") saveContaAtual({ modo: "itens", totalManual: "" });
+    else saveContaAtual({ modo: "" });
+  };
+  const contaModo = gcContaModo(contaAtual);
 
   const handleToggleWishlistComprado = async (id) => {
     const item = wishlistItems.find(i => i.id === id);
@@ -4803,9 +4984,12 @@ function App({ session }) {
               comTaxa={contaAtual.comTaxa} setComTaxa={setContaComTaxa}
               taxaPct={contaAtual.taxaPct} setTaxaPct={setContaTaxaPct}
               pessoas={contaAtual.pessoas} setPessoas={setContaPessoas}
+              local={contaAtual.local} setLocal={setContaLocal}
+              modo={contaAtual.modo} onSwitchModo={switchContaModo}
               itemForm={contaItemForm} setItemForm={setContaItemForm}
               subTab={contaSubTab} setSubTab={setContaSubTab}
               historico={contasSalvas}
+              cards={cardSettings}
               onFecharConta={fecharConta}
             />
           ) : subTab === "viagens" ? (
@@ -4833,10 +5017,9 @@ function App({ session }) {
           )}
         </main>
 
-        {/* Escondido em Conta > Histórico: não existe ação de "criar" ali,
-            só de consultar (mesmo guard já usado em Despesas > Recorrências
-            pra trocar de ação, aqui é pra sumir de vez). */}
-        {!(subTab === "conta" && contaSubTab === "historico") && (
+        {/* Escondido em Conta > Histórico (só consulta) e em Conta > total
+            (o valor é o próprio campo na tela — nada pra “criar”). */}
+        {!(subTab === "conta" && (contaSubTab === "historico" || contaModo === "total")) && (
           <button type="button" className="gc-fab"
             onClick={() => {
               if (subTab === "dashboard") setDashboardFabMenu(true);
@@ -4848,13 +5031,16 @@ function App({ session }) {
               else if (subTab === "investimentos") setSnapshotForm({ initialCompetencia: competenciaAtual() });
               else if (subTab === "cartao") setCartaoFabMenu(true);
               else if (subTab === "sonhos") setSonhosFabMenu(true);
-              else if (subTab === "conta") setContaItemForm({ initial: null });
+              else if (subTab === "conta") {
+                if (contaModo === "itens") setContaItemForm({ initial: null });
+                else setContaFabMenu(true);
+              }
               else if (subTab === "viagens") {
                 if (tripAberta) setTripExpenseForm({ initial: null });
                 else setTripForm({ initial: null });
               }
             }}
-            aria-label={subTab === "dashboard" ? "Adicionar" : subTab === "receitas" ? "Nova fonte de receita" : subTab === "despesas" ? (despesasSub === "recorrencias" ? "Nova recorrência" : "Nova despesa") : subTab === "investimentos" ? "Registrar saldo" : subTab === "cartao" ? "Nova despesa no cartão" : subTab === "sonhos" ? "Adicionar" : subTab === "conta" ? "Novo item da conta" : subTab === "viagens" ? (tripAberta ? "Novo gasto" : "Nova viagem") : "Adicionar"}>
+            aria-label={subTab === "dashboard" ? "Adicionar" : subTab === "receitas" ? "Nova fonte de receita" : subTab === "despesas" ? (despesasSub === "recorrencias" ? "Nova recorrência" : "Nova despesa") : subTab === "investimentos" ? "Registrar saldo" : subTab === "cartao" ? "Nova despesa no cartão" : subTab === "sonhos" ? "Adicionar" : subTab === "conta" ? (contaModo === "itens" ? "Novo item da conta" : "Começar a conta") : subTab === "viagens" ? (tripAberta ? "Novo gasto" : "Nova viagem") : "Adicionar"}>
             <Plus size={26} />
           </button>
         )}
@@ -4888,6 +5074,20 @@ function App({ session }) {
               <button type="button" className="gc-fab-option" onClick={() => { setDashboardFabMenu(false); setSnapshotForm({ initialCompetencia: competenciaAtual() }); }}>
                 <BarChart3 size={22} />
                 <span className="gc-fab-option-txt"><strong>Novo saldo de investimento</strong><small>Atualiza o Saldo em Caixa deste mês</small></span>
+              </button>
+            </div>
+          </Modal>
+        )}
+        {contaFabMenu && (
+          <Modal title="Como você quer lançar?" onClose={() => setContaFabMenu(false)}>
+            <div className="gc-fab-menu">
+              <button type="button" className="gc-fab-option" onClick={() => { setContaFabMenu(false); switchContaModo("itens"); setContaItemForm({ initial: null }); }}>
+                <Utensils size={22} />
+                <span className="gc-fab-option-txt"><strong>Adicionar itens</strong><small>Chopp, burger, o que cada um pediu</small></span>
+              </button>
+              <button type="button" className="gc-fab-option" onClick={() => { setContaFabMenu(false); switchContaModo("total"); }}>
+                <FileText size={22} />
+                <span className="gc-fab-option-txt"><strong>Informar o total</strong><small>Só o valor da conta, dividido por igual</small></span>
               </button>
             </div>
           </Modal>
@@ -5346,6 +5546,12 @@ div.gc-statcard { cursor: default; }
 .gc-conta-fields { display: flex; flex-direction: column; gap: var(--sp-3); }
 .gc-conta-hint { margin: 0; padding: var(--sp-3) var(--sp-1); font-size: 13.5px; }
 .gc-conta-hint-left { margin: -4px 0 0; text-align: left; font-size: 12.5px; }
+.gc-conta-switch {
+  background: none; border: none; padding: var(--sp-2) var(--sp-1) 0; cursor: pointer;
+  font-family: 'Space Grotesk', sans-serif; font-size: 12.5px; font-weight: 500;
+  color: var(--gc-ink-soft); text-align: left;
+}
+.gc-conta-switch:hover { color: var(--gc-accent); }
 .gc-parcela-hint { grid-column: 1 / -1; margin: -4px 0 0; text-align: left; font-size: 12.5px; }
 .gc-conta-taxa-row { display: flex; align-items: center; gap: var(--sp-3); padding: 2px 0; }
 .gc-conta-taxa-label { flex: 1; font-family: 'Space Grotesk', sans-serif; font-weight: 600; font-size: 14px; color: var(--gc-ink); }

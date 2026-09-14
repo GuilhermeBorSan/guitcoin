@@ -184,15 +184,24 @@ snake_case) estão todas implementadas: `income_sources`/`income_entries`/
   divisão de conta de bar/restaurante): singleton, sempre `id: "atual"`
   (mesmo precedente do `credit_card_settings` legado, ver "Campos novos no
   Firestore"). Campos: `itens` (array `{id, nome, valor, quantidade}`),
-  `totalManual`, `comTaxa`, `taxaPct`, `pessoas`, `atualizadoEm`. **Autosave
+  `local` (onde foi a conta — texto livre, opcional), `modo` (`itens`|
+  `total`|`""` — qual fluxo a tela mostra; docs antigos sem o campo
+  inferem: tem itens → itens, senão se `totalManual` → total, senão
+  vazio), `totalManual`, `comTaxa`, `taxaPct`, `pessoas`, `atualizadoEm`.
+  **Autosave
   sem botão**: toda alteração chama `saveContaAtual` (em `useGcData`), que
   enfileira em `localStorage` de forma síncrona e debounça só a chamada de
   rede (600ms) — mesma fila de escritas pendentes do resto do app, é o que
   resolve o item sumir ao minimizar (a Conta era 100% `useState` local até
   essa mudança, sem nenhuma persistência).
 - `contas_salvas` — histórico de contas fechadas: mesmos campos de
-  `conta_atual` mais `total` (congelado no momento do fechamento, não
-  recalculado depois) e `fechadoEm`. Criado pelo botão "Fechar conta"
+  `conta_atual` (exceto `modo`, que é só do rascunho) mais `total` (congelado no momento do fechamento, não
+  recalculado depois), `fechadoEm`, `pagoPor` (`gui`|`bruno`), `pagamento`
+  (`pix`|`cartao`, só se Gui), `cardId` e `despesaId` (instância criada ao
+  fechar, ou `null` se Bruno). **Fechar conta** abre um modal: quem pagou;
+  se Gui, PIX/dinheiro lança em Despesas do mês (`pago: true`) e cartão
+  lança `noCartao` na fatura (lista de `credit_card_settings`). Valor = total
+  da conta. Criado pelo botão "Fechar conta"
   (`fecharConta` em `useGcData`), que arquiva o rascunho aqui e reseta
   `conta_atual`. Tela tem TabBar Conta/Histórico (mesmo padrão de
   Itens/Histórico da Lista de Sonhos).
@@ -360,11 +369,11 @@ sem esse campo continuam existindo — a tela precisa tratar o valor ausente
 como "falsy"/default (mesmo cuidado de `row.campo || default` que os
 mapeadores `gcRowToX` faziam antes; sem eles agora, quem lê o dado direto do
 Firestore é quem tem essa responsabilidade). Vale a pena manter, aqui, o
-registro do que foi o último campo adicionado — **`cardId` em
-`expense_templates`/`expense_instances`, e `credit_card_settings` deixou de
-ser singleton** (vários cartões com `nome`/`diaFechamento`/`ordem`; doc
-legado `id: "main"` sem nome vira "Cartão" na UI). Documentos antigos
-`noCartao` sem `cardId` aparecem só na aba **Todos** até serem editados.
+registro do que foi o último campo adicionado — **`pagoPor` /
+`pagamento` / `cardId` / `despesaId` em `contas_salvas`**. Ao fechar, se
+o Gui pagou no cartão ou PIX, também nasce uma `expense_instance`. Antes:
+`modo` em `conta_atual`. Contas antigas sem `pagoPor` continuam mostrando
+só a data no Histórico.
 
 ## Como verificar mudanças
 Abra o `index.html` no navegador — entra direto em modo demo local
