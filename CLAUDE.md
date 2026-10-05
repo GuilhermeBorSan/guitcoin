@@ -145,6 +145,14 @@ snake_case) estão todas implementadas: `income_sources`/`income_entries`/
   (acima da lista, sempre visível) que abre direto o
   `GcDespesasFaturaPicker` — atalho pro mesmo fluxo que já existia no menu
   do FAB ("Fatura do cartão"), sem precisar abrir o FAB.
+- **Total da fatura sem itemizar** (`totalFatura: true` em `expense_instances`):
+  FAB da tela Cartão → "Total da fatura" (`GcCartaoTotalFaturaForm`) grava
+  UMA instância `noCartao` (`descricao: "Total da fatura"`, `cardId`,
+  `competencia` = mês da fatura, sem `diaCompra`, `valorConfirmado: true`).
+  Entra sozinha em `gcFaturaInstances`/total da fatura/total ao vivo de
+  Despesas, com pill "Total". Um por cartão+fatura (relançar atualiza).
+  Se a fatura já tiver gastos individuais, o total soma com eles (o form
+  avisa). Editar/excluir pela própria linha (abre o mesmo form).
 - `credit_card_settings` — um documento por cartão (`id`, `nome`,
   `diaFechamento` 1–31 opcional, `ordem`). CRUD via `GcCardsManager`/
   `GcCardForm` (engrenagem na tela Cartão). Excluir bloqueia se ainda houver

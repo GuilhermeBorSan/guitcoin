@@ -2507,6 +2507,113 @@ function GcExpenseInstanceForm({ initial, categories, competencia, defaultNoCart
   );
 }
 
+// Lançar só o valor total de uma fatura (sem itemizar compras): vira uma
+// expense_instance noCartao comum (flag totalFatura), então entra sozinha em
+// gcFaturaInstances / total da fatura / total ao vivo de Despesas.
+function GcCartaoTotalFaturaForm({ initial, instances, cards, categories, defaultCardId, defaultCompetencia, onSave, onDelete, onClose }) {
+  const cardsList = gcNormalizeCards(cards);
+  const [cardId, setCardId] = useState(() => initial ? (initial.cardId || "") : gcDefaultCardId(cardsList, null, defaultCardId));
+  const [faturaComp, setFaturaComp] = useState(initial ? initial.competencia : (defaultCompetencia || competenciaAtual()));
+  const [valor, setValor] = useState(initial && initial.valor ? String(initial.valor).replace(".", ",") : "");
+  const [busy, setBusy] = useState(false);
+  const [formError, setFormError] = useState("");
+  const existente = (instances || []).find(i =>
+    i.totalFatura && i.cardId === cardId && i.competencia === faturaComp && (!initial || i.id !== initial.id));
+  const outrosItens = cardId && faturaComp
+    ? gcFaturaInstances(instances, faturaComp, cardsList, cardId).filter(i => !i.totalFatura && (!initial || i.id !== initial.id)).length
+    : 0;
+
+  const submit = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    setFormError("");
+    const v = parseFloat(String(valor).replace(",", ".")) || 0;
+    if (!cardId) { setFormError("Escolha o cartão."); return; }
+    if (!faturaComp) { setFormError("Escolha o mês da fatura."); return; }
+    if (v <= 0) { setFormError("Informe o valor total da fatura."); return; }
+    setBusy(true);
+    try {
+      // Já existe um total pra esse cartão/fatura: atualiza em vez de duplicar.
+      const base = initial || existente || null;
+      const ok = await onSave({
+        ...(base || {}),
+        id: base ? base.id : uid(),
+        templateId: null,
+        grupo: base ? base.grupo : gcDefaultGrupoFatura(categories),
+        descricao: "Total da fatura",
+        competencia: faturaComp,
+        valor: v,
+        pago: base ? !!base.pago : false,
+        compartilhado: false,
+        compartilhadoCom: "",
+        minhaParcelaPct: 100,
+        valorConfirmado: true,
+        parcelaAtual: null,
+        totalParcelas: null,
+        noCartao: true,
+        diaCompra: null,
+        cardId,
+        totalFatura: true,
+      });
+      if (ok === false) { setFormError("Não consegui salvar. Tenta de novo."); return; }
+      onClose();
+    } catch (err) {
+      console.error(err);
+      setFormError("Não consegui salvar. Tenta de novo.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal title={initial ? "Editar total da fatura" : "Total da fatura"} onClose={onClose}>
+      {cardsList.length === 0 ? (
+        <EmptyState icon={<CreditCard size={40} />} title="Nenhum cartão cadastrado" message="Cadastre um cartão (engrenagem) antes de lançar o total da fatura." />
+      ) : (
+        <form onSubmit={submit} className="lb-form-grid" noValidate>
+          <Field label="Cartão" wide select>
+            <select value={cardId} onChange={e => { setCardId(e.target.value); setFormError(""); }}>
+              <option value="">Escolha…</option>
+              {cardsList.map(c => <option key={c.id} value={c.id}>{c.nome}</option>)}
+            </select>
+          </Field>
+          <Field label="Fatura" wide>
+            <input type="month" value={faturaComp} onChange={e => { setFaturaComp(e.target.value); setFormError(""); }} />
+          </Field>
+          <Field label="Valor total da fatura" wide>
+            <input type="text" inputMode="decimal" value={valor} onChange={e => setValor(e.target.value)} placeholder="0,00" autoFocus />
+          </Field>
+          {existente && !initial && (
+            <p className="lb-hint gc-parcela-hint">Essa fatura já tem um total lançado ({gcFmtMoney(existente.valor)}) — salvar atualiza o valor.</p>
+          )}
+          {outrosItens > 0 && (
+            <p className="lb-hint gc-parcela-hint">Essa fatura já tem {outrosItens} gasto{outrosItens > 1 ? "s" : ""} lançado{outrosItens > 1 ? "s" : ""} — o total será somado a eles.</p>
+          )}
+          {formError && <p className="lb-hint gc-parcela-hint" role="alert" style={{ color: "var(--gc-red)" }}>{formError}</p>}
+          <div className="lb-form-footer">
+            <div className="lb-form-actions">
+              <div className="lb-form-actions-left">
+                {initial && (
+                  <button type="button" className="lb-btn danger icon-only" aria-label="Excluir" disabled={busy} onClick={async () => {
+                    if (!confirm("Excluir o total dessa fatura?")) return;
+                    const ok = await onDelete(initial.id);
+                    if (ok !== false) onClose();
+                  }}>
+                    <Trash2 size={16} />
+                  </button>
+                )}
+              </div>
+              <div className="lb-form-actions-right">
+                <button type="button" className="lb-btn ghost" onClick={onClose} disabled={busy}>Cancelar</button>
+                <button type="submit" className="lb-btn primary" disabled={busy}>{busy ? "Salvando..." : "Salvar"}</button>
+              </div>
+            </div>
+          </div>
+        </form>
+      )}
+    </Modal>
+  );
+}
+
 function GcDespesasFaturaPicker({ instances, cards, categories, defaultCompetencia, onSave, onClose }) {
   const cardsList = gcNormalizeCards(cards);
   const [cardId, setCardId] = useState(() => (cardsList[0] && cardsList[0].id) || "");
@@ -3101,7 +3208,7 @@ function GcCartao({ instances, templates, categories, cards, competencia, onComp
       {cardsList.length === 0 ? (
         <EmptyState icon={<CreditCard size={40} />} title="Nenhum cartão cadastrado" message="Toque na engrenagem pra cadastrar Nubank, BTG ou outro cartão." />
       ) : itens.length === 0 ? (
-        <EmptyState icon={<CreditCard size={40} />} title="Nada nessa fatura" message="Marque uma despesa avulsa ou recorrência como &quot;Paga no cartão&quot; pra ela aparecer aqui." />
+        <EmptyState icon={<CreditCard size={40} />} title="Nada nessa fatura" message="Marque uma despesa avulsa ou recorrência como &quot;Paga no cartão&quot; pra ela aparecer aqui — ou lance só o total da fatura pelo +." />
       ) : (
         <div className="gc-list">
           {itens.map(inst => {
@@ -3112,6 +3219,7 @@ function GcCartao({ instances, templates, categories, cards, competencia, onComp
                   <span className="gc-list-row-grow">
                     <span className="gc-list-row-title-line">
                       <span className="gc-list-row-title">{inst.descricao}</span>
+                      {inst.totalFatura && <span className="gc-pill gc-pill-muted">Total</span>}
                       {inst.totalParcelas && (
                         <span className="gc-pill gc-pill-muted" title="Parcela" aria-label={`Parcela ${inst.parcelaAtual} de ${inst.totalParcelas}`}>{inst.parcelaAtual}/{inst.totalParcelas}</span>
                       )}
@@ -4700,6 +4808,7 @@ function App({ session }) {
   const [despesasFaturaPicker, setDespesasFaturaPicker] = useState(false);
   const [cartaoFabMenu, setCartaoFabMenu] = useState(false);
   const [cartaoRecorrenciaPicker, setCartaoRecorrenciaPicker] = useState(false);
+  const [cartaoTotalForm, setCartaoTotalForm] = useState(null);
   const [dashboardFabMenu, setDashboardFabMenu] = useState(false);
   const [sonhosFabMenu, setSonhosFabMenu] = useState(false);
   const [topbarFilterOpen, setTopbarFilterOpen] = useState(false);
@@ -4966,7 +5075,9 @@ function App({ session }) {
               cards={cardSettings} competencia={cartaoComp}
               onCompetenciaChange={setCartaoComp}
               cardFilter={cartaoCardFilter} onCardFilterChange={setCartaoCardFilter}
-              onEditInstance={(inst) => setInstanceForm({ initial: inst, mode: "cartao" })}
+              onEditInstance={(inst) => inst.totalFatura
+                ? setCartaoTotalForm({ initial: inst })
+                : setInstanceForm({ initial: inst, mode: "cartao" })}
               onOpenSettings={() => setCardSettingsForm(true)}
             />
           ) : subTab === "sonhos" ? (
@@ -5148,8 +5259,25 @@ function App({ session }) {
                 <CreditCard size={22} />
                 <span className="gc-fab-option-txt"><strong>Parcelada</strong><small>Compra em Nx (ex.: notebook 10x)</small></span>
               </button>
+              <button type="button" className="gc-fab-option" onClick={() => { setCartaoFabMenu(false); setCartaoTotalForm({ initial: null }); }}>
+                <Wallet size={22} />
+                <span className="gc-fab-option-txt"><strong>Total da fatura</strong><small>Só o valor total, sem lançar cada gasto</small></span>
+              </button>
             </div>
           </Modal>
+        )}
+        {cartaoTotalForm && (
+          <GcCartaoTotalFaturaForm
+            initial={cartaoTotalForm.initial}
+            instances={expenseInstances}
+            cards={cardSettings}
+            categories={expenseCategories}
+            defaultCardId={cartaoDefaultCardId}
+            defaultCompetencia={cartaoComp}
+            onSave={saveExpenseInstance}
+            onDelete={deleteExpenseInstance}
+            onClose={() => setCartaoTotalForm(null)}
+          />
         )}
         {cartaoRecorrenciaPicker && (
           <GcCartaoEscolherRecorrencia
